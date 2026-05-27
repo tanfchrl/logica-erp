@@ -46,9 +46,9 @@ WHERE grand_total = 0 AND total <> 0;
 
 -- Per-line required_by lets a single PO carry items that arrive on different
 -- dates (common when consolidating MR items from multiple departments).
+-- (description already exists in 0009 — don't re-add)
 ALTER TABLE purchase_order_item
   ADD COLUMN required_by_date date,
-  ADD COLUMN description      text,
   ADD COLUMN cost_center_id   text REFERENCES cost_center(id),
   ADD COLUMN tax_amount       numeric(18,4) NOT NULL DEFAULT 0,
   ADD COLUMN total            numeric(18,4) NOT NULL DEFAULT 0,
@@ -89,7 +89,6 @@ DROP INDEX IF EXISTS po_status_idx;
 
 ALTER TABLE purchase_order_item
   DROP COLUMN IF EXISTS required_by_date,
-  DROP COLUMN IF EXISTS description,
   DROP COLUMN IF EXISTS cost_center_id,
   DROP COLUMN IF EXISTS tax_amount,
   DROP COLUMN IF EXISTS total,

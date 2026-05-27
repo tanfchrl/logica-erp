@@ -97,18 +97,18 @@ type PurchaseReceiptLine struct {
 
 // ---- input ----
 
-type CreateInput struct {
+type PRCreateInput struct {
 	CompanyID              string                  `json:"company_id,omitempty"`
 	SupplierID             string                  `json:"supplier_id"`
 	PostingDate            string                  `json:"posting_date"`
 	AgainstPurchaseOrderID string                  `json:"against_purchase_order_id,omitempty"`
 	SupplierDeliveryNote   string                  `json:"supplier_delivery_note,omitempty"`
 	Remarks                string                  `json:"remarks,omitempty"`
-	Items                  []LineInput             `json:"items"`
+	Items                  []PRLineInput             `json:"items"`
 	CustomFields           map[string]any          `json:"custom_fields,omitempty"`
 }
 
-type LineInput struct {
+type PRLineInput struct {
 	ItemID                string `json:"item_id"`
 	ItemCode              string `json:"item_code,omitempty"`
 	ItemName              string `json:"item_name,omitempty"`
@@ -141,7 +141,7 @@ func NewService(db *dbx.DB, po *purchaseorder.Service) *Service {
 
 // ---- CreateDraft ----
 
-func (s *Service) CreateDraft(ctx context.Context, in CreateInput) (*PurchaseReceipt, error) {
+func (s *Service) CreateDraft(ctx context.Context, in PRCreateInput) (*PurchaseReceipt, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
 		return nil, errors.New("purchase_receipt: unauthenticated")

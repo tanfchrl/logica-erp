@@ -117,7 +117,7 @@ func Register(api huma.API, h *Handler) {
 }
 
 type (
-	mrCreateIn struct{ Body CreateInput }
+	mrCreateIn struct{ Body MRCreateInput }
 	mrOut      struct{ Body MaterialRequest }
 	mrListOut  struct{ Body mrListBody }
 	mrListBody struct {

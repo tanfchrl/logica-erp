@@ -134,7 +134,7 @@ type PurchaseOrderTaxRow struct {
 
 // ---- input shapes ----
 
-type CreateInput struct {
+type POCreateInput struct {
 	CompanyID          string                  `json:"company_id,omitempty"`
 	SupplierID         string                  `json:"supplier_id"`
 	TransactionDate    string                  `json:"transaction_date"`
@@ -146,11 +146,11 @@ type CreateInput struct {
 	TermsAndConditions string                  `json:"terms_and_conditions,omitempty"`
 	PaymentTerms       string                  `json:"payment_terms,omitempty"`
 	LetterheadID       string                  `json:"letterhead_id,omitempty"`
-	Items              []LineInput             `json:"items"`
+	Items              []POLineInput             `json:"items"`
 	CustomFields       map[string]any          `json:"custom_fields,omitempty"`
 }
 
-type LineInput struct {
+type POLineInput struct {
 	ItemID         string `json:"item_id,omitempty"`
 	ItemCode       string `json:"item_code,omitempty"`
 	ItemName       string `json:"item_name,omitempty"`
@@ -181,7 +181,7 @@ func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
 // ---- CreateDraft ----
 
-func (s *Service) CreateDraft(ctx context.Context, in CreateInput) (*PurchaseOrder, error) {
+func (s *Service) CreateDraft(ctx context.Context, in POCreateInput) (*PurchaseOrder, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
 		return nil, errors.New("purchase_order: unauthenticated")

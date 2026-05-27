@@ -187,7 +187,7 @@ func Register(api huma.API, h *Handler) {
 }
 
 type (
-	poCreateIn struct{ Body CreateInput }
+	poCreateIn struct{ Body POCreateInput }
 	poOut      struct{ Body PurchaseOrder }
 	poListOut  struct{ Body poListBody }
 	poListBody struct {

@@ -104,7 +104,7 @@ type MaterialRequestLine struct {
 
 // ---- input shapes ----
 
-type CreateInput struct {
+type MRCreateInput struct {
 	CompanyID       string         `json:"company_id,omitempty"`
 	Purpose         string         `json:"purpose"`
 	TransactionDate string         `json:"transaction_date"`
@@ -112,11 +112,11 @@ type CreateInput struct {
 	SetWarehouseID  string         `json:"set_warehouse_id,omitempty"`
 	FromWarehouseID string         `json:"from_warehouse_id,omitempty"`
 	Remarks         string         `json:"remarks,omitempty"`
-	Items           []LineInput    `json:"items"`
+	Items           []MRLineInput    `json:"items"`
 	CustomFields    map[string]any `json:"custom_fields,omitempty"`
 }
 
-type LineInput struct {
+type MRLineInput struct {
 	ItemID         string `json:"item_id,omitempty"`
 	ItemCode       string `json:"item_code,omitempty"`
 	ItemName       string `json:"item_name,omitempty"`
@@ -160,7 +160,7 @@ func NewService(db *dbx.DB, po *purchaseorder.Service) *Service {
 
 // ---- CreateDraft ----
 
-func (s *Service) CreateDraft(ctx context.Context, in CreateInput) (*MaterialRequest, error) {
+func (s *Service) CreateDraft(ctx context.Context, in MRCreateInput) (*MaterialRequest, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
 		return nil, errors.New("material_request: unauthenticated")
@@ -568,14 +568,14 @@ func (s *Service) CreatePOFromMR(ctx context.Context, in CreatePOFromMRInput) (*
 	for _, l := range mr.Items {
 		byRow[l.RowIndex] = l
 	}
-	poLines := make([]purchaseorder.LineInput, 0, len(wants))
+	poLines := make([]purchaseorder.POLineInput, 0, len(wants))
 	for _, w := range wants {
 		ml := byRow[w.rowIndex]
 		var requiredBy string
 		if ml.RequiredByDate != nil {
 			requiredBy = ml.RequiredByDate.Format("2006-01-02")
 		}
-		poLines = append(poLines, purchaseorder.LineInput{
+		poLines = append(poLines, purchaseorder.POLineInput{
 			ItemID:         ml.ItemID,
 			ItemCode:       ml.ItemCode,
 			ItemName:       ml.ItemName,
@@ -594,7 +594,7 @@ func (s *Service) CreatePOFromMR(ctx context.Context, in CreatePOFromMRInput) (*
 		requiredByHdr = mr.RequiredByDate.Format("2006-01-02")
 	}
 
-	po, err := s.po.CreateDraft(ctx, purchaseorder.CreateInput{
+	po, err := s.po.CreateDraft(ctx, purchaseorder.POCreateInput{
 		CompanyID:       mr.CompanyID,
 		SupplierID:      in.SupplierID,
 		TransactionDate: transactionDate,

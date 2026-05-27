@@ -93,7 +93,7 @@ func Register(api huma.API, h *Handler) {
 }
 
 type (
-	prCreateIn struct{ Body CreateInput }
+	prCreateIn struct{ Body PRCreateInput }
 	prOut      struct{ Body PurchaseReceipt }
 	prListOut  struct{ Body prListBody }
 	prListBody struct {
