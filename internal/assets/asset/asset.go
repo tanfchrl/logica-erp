@@ -864,6 +864,24 @@ func Register(api huma.API, h *Handler) {
 		return &assetOut{Body: *a}, nil
 	})
 
+	// Dispose: sale or scrap. Posts a single GL voucher and flips the
+	// asset to a terminal status (Sold / Scrapped). Idempotent at the
+	// service layer via the status guard.
+	huma.Register(api, huma.Operation{
+		OperationID: "dispose-asset", Method: http.MethodPost,
+		Path: "/assets/assets/{id}/dispose", Summary: "Sell or scrap an asset (posts disposal GL voucher)",
+		Tags: []string{"Assets / Asset"},
+	}, func(ctx context.Context, in *assetDisposeIn) (*assetOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionSubmit); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		a, err := h.Service.Dispose(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &assetOut{Body: *a}, nil
+	})
+
 	// Batch depreciation run — wraps PostDepreciation across every eligible
 	// asset in the active company. Per-asset failures are collected, not
 	// raised, so the month-end button stays useful even if one asset is
@@ -911,7 +929,11 @@ type (
 	depRunIn struct {
 		AsOf string `query:"as_of"  doc:"YYYY-MM-DD; defaults to today UTC"`
 	}
-	depRunOut struct{ Body RunResult }
+	depRunOut       struct{ Body RunResult }
+	assetDisposeIn struct {
+		ID   string `path:"id"`
+		Body DisposeInput
+	}
 	assetUpdateIn struct {
 		ID   string `path:"id"`
 		Body AssetUpdateInput
