@@ -17,6 +17,7 @@ import { money, date } from '@/lib/format';
 import { me } from '@/lib/auth';
 import { useUI } from '@/store/ui';
 import { cn } from '@/lib/cn';
+import { AgentDraftsCard } from '@/components/AgentDraftsCard';
 
 interface AgeingReport { totals: { total_outstanding: string } }
 interface BalanceSheet { assets: { account_name: string; amount: string }[]; balanced: boolean }
@@ -90,6 +91,8 @@ export function DashboardPage() {
       />
 
       <div className="flex-1 px-6 lg:px-8 pt-6 pb-8 space-y-6">
+
+        <AgentDraftsCard />
 
         {/* KPI cards — neutral surface tiles, mint only on hover state */}
         <motion.div

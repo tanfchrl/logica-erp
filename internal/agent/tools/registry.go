@@ -171,6 +171,18 @@ func (r *Registry) registerBuiltins() {
 		),
 		Run: r.runSearch,
 	})
+	r.add(Tool{
+		Name: "create_draft",
+		Description: "Create a new draft document (docstatus=0). Use only after you have all required fields. " +
+			"The document is NOT submitted — a human reviews it and submits manually. Tier-1.",
+		Tier: policy.Tier1,
+		JSONSchema: schemaObject(
+			schemaProp("doctype", "string", "Canonical doctype slug (e.g. sales_invoice). Must be in an AGENT_CONTRACT.md with create_draft in tier1_tools."),
+			schemaProp("payload", "object", "The document fields, shape matching the doctype's CreateInput."),
+			required("doctype", "payload"),
+		),
+		Run: r.runCreateDraft,
+	})
 }
 
 func (r *Registry) add(t Tool) { r.tools[t.Name] = t }
@@ -297,6 +309,41 @@ func (r *Registry) runReport(ctx context.Context, cc erpclient.CallContext, args
 		return nil, err
 	}
 	return out, nil
+}
+
+// runCreateDraft POSTs the supplied payload to the doctype's api_path with
+// no submit. Returns the created document id + name so the orchestrator can
+// surface them as a proposal and enqueue an agent_approval_queue row.
+func (r *Registry) runCreateDraft(ctx context.Context, cc erpclient.CallContext, args json.RawMessage) (any, error) {
+	var a struct {
+		Doctype string         `json:"doctype"`
+		Payload map[string]any `json:"payload"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.Doctype == "" {
+		return nil, errors.New("doctype is required")
+	}
+	if len(a.Payload) == 0 {
+		return nil, errors.New("payload is required")
+	}
+	_, doc, ok := r.registry.FindByDoctype(a.Doctype)
+	if !ok {
+		return nil, fmt.Errorf("doctype %q not declared", a.Doctype)
+	}
+	var out map[string]any
+	if err := r.erp.Do(ctx, cc, "POST", doc.APIPath, a.Payload, &out); err != nil {
+		return nil, err
+	}
+	// Return the small fields the orchestrator + audit log care about.
+	pick := map[string]any{
+		"id":      out["id"],
+		"name":    out["name"],
+		"doctype": a.Doctype,
+		"path":    doc.APIPath,
+	}
+	return pick, nil
 }
 
 func (r *Registry) runSearch(ctx context.Context, cc erpclient.CallContext, args json.RawMessage) (any, error) {

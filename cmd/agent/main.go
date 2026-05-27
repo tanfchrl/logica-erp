@@ -28,6 +28,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 
+	"github.com/tandigital/logica-erp/internal/agent/approvals"
 	"github.com/tandigital/logica-erp/internal/agent/audit"
 	"github.com/tandigital/logica-erp/internal/agent/erpclient"
 	"github.com/tandigital/logica-erp/internal/agent/llm"
@@ -79,6 +80,7 @@ func main() {
 	llmClient := llm.New(llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel})
 	erp := erpclient.New(erpBase)
 	toolReg := tools.New(erp, registry)
+	apvStore := approvals.New(db)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
@@ -108,8 +110,9 @@ func main() {
 
 		hapi := humachi.New(api, humaCfg)
 
-		registerChat(hapi, sessStore, rec, llmClient, registry, toolReg, gate)
+		registerChat(hapi, sessStore, rec, llmClient, registry, toolReg, gate, apvStore)
 		registerSessions(hapi, sessStore)
+		registerApprovals(hapi, apvStore, rec)
 	})
 
 	srv := &http.Server{
@@ -160,7 +163,7 @@ func registerSessions(api huma.API, store *session.Store) {
 const maxToolIterations = 6
 
 func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *llm.Client,
-	registry *agentcontract.Registry, toolReg *tools.Registry, gate *policy.Gate) {
+	registry *agentcontract.Registry, toolReg *tools.Registry, gate *policy.Gate, apvStore *approvals.Store) {
 	huma.Register(api, huma.Operation{
 		OperationID: "agent-chat",
 		Method:      http.MethodPost,
@@ -276,6 +279,12 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 					})
 					result := runOneToolCall(ctx, toolReg, gate, erpcc, tc, rec,
 						audit.Event{SessionID: sess.ID, UserID: p.UserID, CompanyID: co, Turn: turn})
+					// Tier-1: agent-authored drafts get a row in the approval
+					// queue + a `proposal` audit event so the human can find
+					// them later from the dashboard or the recent-drafts surface.
+					if tc.Function.Name == "create_draft" {
+						maybeEnqueueDraft(ctx, apvStore, rec, p.UserID, co, sess.ID, turn, in.Body.Message, result)
+					}
 					resultBytes, _ := json.Marshal(result)
 					turn++
 					_ = store.AppendMessage(ctx, session.Message{
@@ -312,6 +321,51 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 			Reply:     assistantContent,
 			Turn:      turn,
 		}}, nil
+	})
+}
+
+// maybeEnqueueDraft writes a row into agent_approval_queue when a
+// create_draft tool call succeeded — gives the human a single place to find
+// what the copilot has been building. Errors are logged via the audit
+// recorder but never propagated; a missed queue row shouldn't fail the chat
+// loop.
+func maybeEnqueueDraft(ctx context.Context, apv *approvals.Store, rec *audit.Recorder,
+	userID, companyID, sessionID string, turn int, prompt string, result any) {
+	m, ok := result.(map[string]any)
+	if !ok {
+		return
+	}
+	if _, errSet := m["error"]; errSet {
+		return
+	}
+	docID, _ := m["id"].(string)
+	docName, _ := m["name"].(string)
+	doctype, _ := m["doctype"].(string)
+	if docID == "" || doctype == "" {
+		return
+	}
+	entry, err := apv.Enqueue(ctx, approvals.Entry{
+		SessionID: sessionID, UserID: userID, CompanyID: companyID,
+		Doctype: doctype, DocumentID: docID, DocumentName: docName,
+		Prompt: prompt,
+	})
+	if err != nil {
+		rec.Record(ctx, audit.Event{
+			SessionID: sessionID, UserID: userID, CompanyID: companyID,
+			Turn: turn, Type: audit.EventError,
+			Payload: map[string]any{"context": "approvals.enqueue", "err": err.Error()},
+		})
+		return
+	}
+	rec.Record(ctx, audit.Event{
+		SessionID: sessionID, UserID: userID, CompanyID: companyID,
+		Turn: turn, Type: audit.EventProposal,
+		Payload: map[string]any{
+			"approval_id":   entry.ID,
+			"doctype":       doctype,
+			"document_id":   docID,
+			"document_name": docName,
+		},
 	})
 }
 
@@ -368,6 +422,58 @@ func mapToolForGate(toolName string) string {
 	return toolName
 }
 
+// registerApprovals wires the human-side approval queue endpoints:
+//
+//	GET  /approvals/pending           — caller's pending drafts
+//	POST /approvals/{id}/resolve      — flip to approved or rejected
+func registerApprovals(api huma.API, store *approvals.Store, rec *audit.Recorder) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-pending-agent-approvals",
+		Method:      http.MethodGet,
+		Path:        "/approvals/pending",
+		Summary:     "Tier-1 drafts the agent has produced and are waiting for the caller to review",
+		Tags:        []string{"Agent / Approvals"},
+	}, func(ctx context.Context, _ *struct{}) (*approvalsListOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		es, err := store.ListPending(ctx, p.UserID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &approvalsListOut{Body: approvalsListBody{Items: es}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "resolve-agent-approval",
+		Method:      http.MethodPost,
+		Path:        "/approvals/{id}/resolve",
+		Summary:     "Mark an agent draft as approved (after a human reviews) or rejected",
+		Tags:        []string{"Agent / Approvals"},
+	}, func(ctx context.Context, in *resolveApprovalIn) (*approvalsActionOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		if err := store.Resolve(ctx, p.UserID, in.ID, in.Body.Status); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		var evType audit.EventType = audit.EventHumanApproved
+		if in.Body.Status == "rejected" {
+			evType = audit.EventHumanRejected
+		}
+		rec.Record(ctx, audit.Event{
+			UserID: p.UserID, CompanyID: co,
+			SessionID: "—", // queue resolutions aren't tied to a chat session
+			Type: evType,
+			Payload: map[string]any{"approval_id": in.ID},
+		})
+		return &approvalsActionOut{Body: map[string]string{"status": "ok"}}, nil
+	})
+}
+
 // buildSystemAndHistory composes the system prompt from contract context
 // plus the persisted conversation history (excluding the just-appended user
 // message — the caller adds that back). Used by the chat handler.
@@ -417,6 +523,20 @@ type (
 	listSessionsOut  struct{ Body listSessionsBody }
 	listSessionsBody struct {
 		Items []session.Session `json:"items"`
+	}
+	approvalsListOut  struct{ Body approvalsListBody }
+	approvalsListBody struct {
+		Items []approvals.Entry `json:"items"`
+	}
+	resolveApprovalIn struct {
+		ID   string `path:"id"`
+		Body resolveBody
+	}
+	resolveBody struct {
+		Status string `json:"status" enum:"approved,rejected" required:"true"`
+	}
+	approvalsActionOut struct {
+		Body map[string]string
 	}
 )
 
