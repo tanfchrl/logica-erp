@@ -41,7 +41,14 @@ export function DetailView({ config, schema }: DetailViewProps) {
     queryKey: ['doctype-detail', config.endpoint, id],
     queryFn:  () => api<Record<string, unknown>>(`${config.endpoint}/${id}`),
     enabled:  !!id,
+    retry: (count, err) => {
+      const s = (err as { status?: number })?.status ?? 0;
+      if (s === 401 || s === 403 || s === 404) return false;
+      return count < 2;
+    },
   });
+  const forbidden = (error as { status?: number })?.status === 403;
+  const notFound  = (error as { status?: number })?.status === 404;
 
   const listPath = `${config.modulePath}/${config.slug}`;
   const recordTitle = data ? pickTitle(data, config) : '…';
@@ -78,7 +85,11 @@ export function DetailView({ config, schema }: DetailViewProps) {
             {error && (
               <Card className="!p-3 bg-brand-error/5 border-brand-error/30 flex items-start gap-2">
                 <AlertCircle className="size-4 text-brand-error mt-0.5 shrink-0" />
-                <span className="text-body-sm text-brand-error">{(error as Error).message}</span>
+                <span className="text-body-sm text-brand-error">
+                  {forbidden ? "You don't have access to this menu."
+                    : notFound  ? "Document not found."
+                    : (error as Error).message}
+                </span>
               </Card>
             )}
 

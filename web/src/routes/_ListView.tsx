@@ -27,11 +27,18 @@ interface ListViewProps {
  */
 export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
   const navigate = useNavigate();
-  const { data, isLoading, isError, refetch, isFetching } = useQuery({
+  const { data, isLoading, isError, error, refetch, isFetching } = useQuery({
     queryKey: ['doctype', config.endpoint],
     queryFn: () => api<ListResponseShape>(config.endpoint),
+    // Don't retry 403/401 — they're "no access", not a transient failure.
+    retry: (count, err) => {
+      const s = (err as { status?: number })?.status ?? 0;
+      if (s === 401 || s === 403 || s === 404) return false;
+      return count < 2;
+    },
   });
   const rows = (data?.items as any[] | undefined) ?? [];
+  const forbidden = (error as { status?: number })?.status === 403;
   const newHref = config.newPath ?? `${config.modulePath}/${config.slug}/new`;
 
   // Default row click: open the doctype detail page at /{module}/{slug}/{id}.
@@ -46,7 +53,11 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
       <PageHeader
         crumbs={[{ label: config.module, to: config.modulePath }, { label: config.title }]}
         title={config.title}
-        subtitle={isError ? <span className="text-danger">Failed to load.</span> : undefined}
+        subtitle={isError ? (
+          <span className="text-danger">
+            {forbidden ? "You don't have access to this menu." : 'Failed to load.'}
+          </span>
+        ) : undefined}
         actions={
           <>
             <Button variant="ghost" size="icon" onClick={() => refetch()} aria-label="Refresh">
@@ -76,9 +87,13 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
             isError ? (
               <EmptyState
                 icon={config.icon}
-                title="Couldn't load this list"
-                description="The server returned an error. Check the API logs or try again."
-                action={<Button onClick={() => refetch()}><RefreshCw className="size-4" /> Retry</Button>}
+                title={forbidden ? "You don't have access to this menu" : "Couldn't load this list"}
+                description={forbidden
+                  ? `Your role doesn't include read permission for ${config.title.toLowerCase()}. Ask an administrator to grant access in Settings → Roles.`
+                  : 'The server returned an error. Check the API logs or try again.'}
+                action={forbidden ? undefined : (
+                  <Button onClick={() => refetch()}><RefreshCw className="size-4" /> Retry</Button>
+                )}
               />
             ) : (
               <EmptyState
