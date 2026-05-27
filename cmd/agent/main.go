@@ -625,6 +625,46 @@ func registerMigration(api huma.API, svc *migration.Service) {
 	})
 
 	huma.Register(api, huma.Operation{
+		OperationID: "propose-opening-balances",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/opening-balances/propose",
+		Summary:     "Step 4: validate a trial balance against the COA and return the reconciliation report",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *proposeOBIn) (*proposeOBOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		cc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
+		prop, err := svc.ProposeOpeningBalances(ctx, p.UserID, in.SessionID, cc, in.Body.Lines, in.Body.PostingDate)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &proposeOBOut{Body: *prop}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "submit-opening-balances",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/opening-balances/submit",
+		Summary:     "Step 4: create + submit the opening-balances JE. Tier-2 — only enabled for this one flow per spec §4.",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *migrationStateIn) (*submitOBOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		cc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
+		jeID, err := svc.SubmitOpeningBalances(ctx, p.UserID, in.SessionID, cc)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &submitOBOut{Body: submitOBBody{JournalEntryID: jeID}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "migration-readiness",
 		Method:      http.MethodGet,
 		Path:        "/migration/{session_id}/readiness",
@@ -706,6 +746,19 @@ type (
 	readinessOut  struct{ Body readinessBody }
 	readinessBody struct {
 		Items []migration.Check `json:"items"`
+	}
+	proposeOBIn struct {
+		SessionID string `path:"session_id"`
+		Body      proposeOBBody
+	}
+	proposeOBBody struct {
+		Lines       []migration.OpeningBalanceLine `json:"lines"`
+		PostingDate string                          `json:"posting_date,omitempty"`
+	}
+	proposeOBOut struct{ Body migration.OpeningBalanceProposal }
+	submitOBOut  struct{ Body submitOBBody }
+	submitOBBody struct {
+		JournalEntryID string `json:"journal_entry_id"`
 	}
 )
 

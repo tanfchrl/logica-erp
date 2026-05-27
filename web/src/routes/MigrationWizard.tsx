@@ -8,6 +8,7 @@ import { Field, Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
 import { getAccessToken, getActiveCompany } from '@/lib/api';
 import { DataMigrationStep } from './migration/DataMigrationStep';
+import { OpeningBalancesStep } from './migration/OpeningBalancesStep';
 
 /**
  * MigrationWizard — five-step onboarding flow described in
@@ -197,11 +198,7 @@ export function MigrationWizard() {
           <DataMigrationStep onContinue={() => setActiveStep('opening_balances')} />
         )}
         {step === 'opening_balances' && (
-          <PlaceholderStep
-            title="Opening balances"
-            description="Trial-balance mapping + reconciliation proof, then a single submitted Journal Entry. Uses /accounting/journal-entries — the wizard wrapper with the debit-vs-credit balance check lands in a follow-up."
-            onSkip={() => setActiveStep('readiness')}
-          />
+          <OpeningBalancesStep sessionId={sessionId} onContinue={() => setActiveStep('readiness')} />
         )}
         {step === 'readiness' && <ReadinessStep sessionId={sessionId} />}
       </main>
