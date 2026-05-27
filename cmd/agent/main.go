@@ -124,6 +124,12 @@ func main() {
 		registerMigration(hapi, migrationSvc)
 		registerNudges(hapi, nudgeEval)
 		audit.RegisterAdmin(hapi, auditQuery)
+
+		// SSE streaming chat. Goes through the same Auth middleware (the
+		// chi router scope above), but bypasses huma — huma's openapi
+		// shape doesn't model text/event-stream well, and we want full
+		// control over flushing.
+		api.Post("/chat/stream", chatStreamHandler(sessStore, rec, llmClient, registry, toolReg, gate, apvStore))
 	})
 
 	srv := &http.Server{

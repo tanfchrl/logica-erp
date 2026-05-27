@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Sparkles, X, SendHorizonal, RotateCw } from 'lucide-react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useNavigate } from '@tanstack/react-router';
+import { Sparkles, X, SendHorizonal, RotateCw, Wrench, Check, FileText } from 'lucide-react';
 import { api, getAccessToken, getActiveCompany } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useUI } from '@/store/ui';
@@ -20,11 +21,6 @@ import { useUI } from '@/store/ui';
  * user's existing JWT; no separate login.
  */
 
-interface ChatResponse {
-  session_id: string;
-  reply: string;
-  turn: number;
-}
 interface ContractsResp {
   items: Array<{
     module: string;
@@ -32,38 +28,88 @@ interface ContractsResp {
     suggested_prompts?: string[];
   }>;
 }
-interface ChatTurn {
-  role: 'user' | 'assistant';
-  content: string;
-  at: number; // ms epoch
-}
+// ChatTurn is now a discriminated union — assistant turns are mutable
+// during streaming, tool turns and proposals are inline markers that
+// help the user follow what the agent is doing.
+type ChatTurn =
+  | { kind: 'user';      content: string; at: number }
+  | { kind: 'assistant'; content: string; at: number; streaming?: boolean }
+  | { kind: 'tool';      name: string;    ok?: boolean; at: number }
+  | { kind: 'proposal';  doctype: string; document_name: string; document_id: string; at: number };
 
 interface CopilotPanelProps {
   open: boolean;
   onClose: () => void;
 }
 
-// Agent traffic goes to /api/agent/v1 which the Vite dev server proxies to
-// the standalone agent process on :8090 (see web/vite.config.ts). In prod,
-// the reverse proxy maps the same prefix to the agent container — so the
-// browser only ever sees one origin.
-function agentFetch<T>(path: string, opts: { method?: string; body?: unknown } = {}): Promise<T> {
-  const headers: Record<string, string> = { Accept: 'application/json' };
+// streamChat opens POST /chat/stream as a Server-Sent Events stream. Each
+// SSE event is wrapped to the handler as a tagged object so React state
+// updates stay narrow. Returns when the stream ends or onEvent throws.
+//
+// SSE wire format (from the Go handler):
+//   event: <kind>\ndata: <json>\n\n
+async function streamChat(
+  body: { session_id?: string; message: string },
+  onEvent: (ev: AgentSSE) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers: Record<string, string> = {
+    Accept: 'text/event-stream',
+    'Content-Type': 'application/json',
+  };
   const token = getAccessToken();
   if (token) headers.Authorization = `Bearer ${token}`;
   const co = getActiveCompany();
   if (co) headers['X-Company-Id'] = co;
-  if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
-  return fetch(path, {
-    method: opts.method ?? 'GET',
-    headers,
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-  }).then(async (r) => {
-    const text = await r.text();
-    const json = text ? JSON.parse(text) : ({} as unknown);
-    if (!r.ok) throw new Error((json as { detail?: string; message?: string }).detail ?? r.statusText);
-    return json as T;
+
+  const resp = await fetch('/api/agent/v1/chat/stream', {
+    method: 'POST', headers, body: JSON.stringify(body), signal,
   });
+  if (!resp.ok || !resp.body) {
+    const text = await resp.text();
+    throw new Error(text || resp.statusText);
+  }
+
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    // SSE events are separated by a blank line.
+    let idx: number;
+    while ((idx = buf.indexOf('\n\n')) !== -1) {
+      const rawEvent = buf.slice(0, idx);
+      buf = buf.slice(idx + 2);
+      const ev = parseSSE(rawEvent);
+      if (ev) onEvent(ev);
+    }
+  }
+}
+
+type AgentSSE =
+  | { kind: 'session';     data: { session_id: string } }
+  | { kind: 'tool_call';   data: { name: string; arguments: string } }
+  | { kind: 'tool_result'; data: { name: string; ok: boolean } }
+  | { kind: 'proposal';    data: { doctype: string; document_id: string; document_name: string } }
+  | { kind: 'delta';       data: { content: string } }
+  | { kind: 'done';        data: { session_id: string; turn: number } }
+  | { kind: 'error';       data: { message: string } };
+
+function parseSSE(raw: string): AgentSSE | null {
+  let event = 'message';
+  let data = '';
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  if (!event || !data) return null;
+  try {
+    return { kind: event, data: JSON.parse(data) } as AgentSSE;
+  } catch {
+    return null;
+  }
 }
 
 export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
@@ -87,31 +133,88 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
     staleTime: 5 * 60_000,
   });
 
-  const send = useMutation({
-    mutationFn: (msg: string) =>
-      agentFetch<ChatResponse>('/api/agent/v1/chat', {
-        method: 'POST',
-        body: { session_id: sessionId ?? undefined, message: msg },
-      }),
-    onSuccess: (resp, msg) => {
-      setSessionId(resp.session_id);
-      setTurns((t) => [
-        ...t,
-        { role: 'user',      content: msg,        at: Date.now() },
-        { role: 'assistant', content: resp.reply, at: Date.now() + 1 },
-      ]);
-      setDraft('');
-      // The reply may have created/modified documents; nudge the list caches.
+  const [pending, setPending] = useState(false);
+  async function sendStreaming(msg: string) {
+    if (pending) return;
+    setPending(true);
+    setDraft('');
+    // Echo the user turn immediately + create the streaming assistant placeholder.
+    setTurns((t) => [
+      ...t,
+      { kind: 'user',      content: msg, at: Date.now() },
+      { kind: 'assistant', content: '',  at: Date.now() + 1, streaming: true },
+    ]);
+    try {
+      await streamChat(
+        { session_id: sessionId ?? undefined, message: msg },
+        (ev) => {
+          switch (ev.kind) {
+            case 'session':
+              setSessionId(ev.data.session_id);
+              break;
+            case 'tool_call':
+              setTurns((t) => [...t, { kind: 'tool', name: ev.data.name, at: Date.now() }]);
+              // The assistant bubble that was streaming pauses; we'll resume
+              // when the next delta arrives, or finalize on done.
+              setTurns((t) => [...t.map((x) =>
+                x.kind === 'assistant' && x.streaming ? { ...x, streaming: false } : x,
+              )]);
+              break;
+            case 'tool_result':
+              setTurns((t) => {
+                // Update the most recent matching tool turn.
+                const i = [...t].reverse().findIndex((x) => x.kind === 'tool' && x.name === ev.data.name && x.ok === undefined);
+                if (i === -1) return t;
+                const idx = t.length - 1 - i;
+                const next = t.slice();
+                next[idx] = { ...t[idx]!, ok: ev.data.ok } as ChatTurn;
+                return next;
+              });
+              break;
+            case 'proposal':
+              setTurns((t) => [...t, {
+                kind: 'proposal',
+                doctype: ev.data.doctype,
+                document_id: ev.data.document_id,
+                document_name: ev.data.document_name,
+                at: Date.now(),
+              }]);
+              break;
+            case 'delta':
+              setTurns((t) => {
+                // Append to the last streaming-assistant turn, or start a new one.
+                const last = t[t.length - 1];
+                if (last && last.kind === 'assistant' && last.streaming) {
+                  const next = t.slice();
+                  next[t.length - 1] = { ...last, content: last.content + ev.data.content };
+                  return next;
+                }
+                return [...t, { kind: 'assistant', content: ev.data.content, at: Date.now(), streaming: true }];
+              });
+              break;
+            case 'done':
+              setTurns((t) => t.map((x) =>
+                x.kind === 'assistant' && x.streaming ? { ...x, streaming: false } : x,
+              ));
+              break;
+            case 'error':
+              setTurns((t) => [...t, {
+                kind: 'assistant', content: `(error) ${ev.data.message}`, at: Date.now(),
+              }]);
+              break;
+          }
+        },
+      );
+    } catch (e) {
+      setTurns((t) => [...t, { kind: 'assistant', content: `(error) ${(e as Error).message}`, at: Date.now() }]);
+    } finally {
+      setPending(false);
+      // Streamed actions may have created docs; nudge the list caches.
       void qc.invalidateQueries({ queryKey: ['doctype'] });
-    },
-    onError: (e: Error, msg) => {
-      setTurns((t) => [
-        ...t,
-        { role: 'user',      content: msg, at: Date.now() },
-        { role: 'assistant', content: `(error) ${e.message}`, at: Date.now() + 1 },
-      ]);
-    },
-  });
+      void qc.invalidateQueries({ queryKey: ['agent-approvals-pending'] });
+      void qc.invalidateQueries({ queryKey: ['agent-nudges-active'] });
+    }
+  }
 
   // Close on Esc, focus the input on open, auto-scroll on new turns.
   useEffect(() => {
@@ -126,14 +229,14 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
   // from somewhere else — typically a nudge CTA), auto-send it.
   useEffect(() => {
     if (!open || !copilotSeedPrompt) return;
-    send.mutate(copilotSeedPrompt);
+    void sendStreaming(copilotSeedPrompt);
     clearCopilotSeed();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, copilotSeedPrompt]);
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [turns, send.isPending]);
+  }, [turns, pending]);
 
   const quickChips = useMemo(() => {
     const all: string[] = [];
@@ -147,8 +250,8 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
 
   function onSend() {
     const msg = draft.trim();
-    if (!msg || send.isPending) return;
-    send.mutate(msg);
+    if (!msg || pending) return;
+    void sendStreaming(msg);
   }
 
   function newConversation() {
@@ -215,7 +318,7 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
                     <button
                       key={q}
                       type="button"
-                      onClick={() => send.mutate(q)}
+                      onClick={() => void sendStreaming(q)}
                       className="text-caption text-charcoal bg-surface hover:bg-surface-soft border border-hairline rounded-full px-2.5 py-1 transition-colors text-left"
                     >
                       {q}
@@ -228,7 +331,7 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
           {turns.map((t, i) => (
             <ChatBubble key={i} turn={t} />
           ))}
-          {send.isPending && (
+          {pending && (
             <div className="flex gap-2 items-center text-caption text-stone pl-1">
               <span className="size-2 rounded-full bg-accent animate-pulse" />
               Thinking…
@@ -256,7 +359,7 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
               <button
                 type="button"
                 onClick={onSend}
-                disabled={!draft.trim() || send.isPending}
+                disabled={!draft.trim() || pending}
                 className="inline-flex items-center gap-1.5 rounded-md bg-accent text-canvas px-2.5 py-1 text-caption font-medium hover:bg-accent/90 disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <SendHorizonal className="size-3.5" />
@@ -271,18 +374,80 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
   );
 }
 
+// Doctype → URL slug mirror — same map the audit middleware / Approval
+// card uses. Keep in sync.
+const DOCTYPE_TO_URL: Record<string, { module: string; slug: string }> = {
+  customer:         { module: '/accounting', slug: 'customers' },
+  supplier:         { module: '/accounting', slug: 'suppliers' },
+  item:             { module: '/accounting', slug: 'items' },
+  sales_invoice:    { module: '/accounting', slug: 'sales-invoices' },
+  purchase_invoice: { module: '/accounting', slug: 'purchase-invoices' },
+  journal_entry:    { module: '/accounting', slug: 'journal-entries' },
+  payment_entry:    { module: '/accounting', slug: 'payment-entries' },
+  employee:         { module: '/hr',         slug: 'employees' },
+  lead:             { module: '/crm',        slug: 'leads' },
+  project:          { module: '/projects',   slug: 'projects' },
+  issue:            { module: '/support',    slug: 'issues' },
+  bom:              { module: '/manufacturing', slug: 'boms' },
+  work_order:       { module: '/manufacturing', slug: 'work-orders' },
+  asset:            { module: '/assets',     slug: 'assets' },
+};
+
 function ChatBubble({ turn }: { turn: ChatTurn }) {
-  const isUser = turn.role === 'user';
-  return (
-    <div className={cn('flex', isUser && 'justify-end')}>
-      <div
+  const navigate = useNavigate();
+  if (turn.kind === 'user') {
+    return (
+      <div className="flex justify-end">
+        <div className="max-w-[85%] rounded-lg px-3 py-2 text-body-sm whitespace-pre-wrap break-words bg-accent text-canvas">
+          {turn.content}
+        </div>
+      </div>
+    );
+  }
+  if (turn.kind === 'assistant') {
+    return (
+      <div className="flex">
+        <div className="max-w-[85%] rounded-lg px-3 py-2 text-body-sm whitespace-pre-wrap break-words bg-surface text-charcoal">
+          {turn.content}
+          {turn.streaming && <span className="inline-block size-2 rounded-full bg-accent animate-pulse ml-1 align-middle" />}
+        </div>
+      </div>
+    );
+  }
+  if (turn.kind === 'tool') {
+    return (
+      <div className="flex items-center gap-2 text-caption text-stone pl-1">
+        {turn.ok === undefined
+          ? <span className="size-2 rounded-full bg-accent/60 animate-pulse" />
+          : turn.ok
+            ? <Check className="size-3 text-brand-success" />
+            : <X className="size-3 text-brand-error" />}
+        <Wrench className="size-3" />
+        <span className="font-mono">{turn.name}</span>
+        {turn.ok === undefined && <span>running…</span>}
+      </div>
+    );
+  }
+  if (turn.kind === 'proposal') {
+    const map = DOCTYPE_TO_URL[turn.doctype];
+    const url = map ? `${map.module}/${map.slug}/${turn.document_id}` : null;
+    return (
+      <button
+        type="button"
+        onClick={() => url && void navigate({ to: url as never })}
         className={cn(
-          'max-w-[85%] rounded-lg px-3 py-2 text-body-sm whitespace-pre-wrap break-words',
-          isUser ? 'bg-accent text-canvas' : 'bg-surface text-charcoal',
+          'flex items-center gap-2 w-full text-left px-3 py-2 rounded-md bg-accent/[0.06] border border-accent/30 hover:bg-accent/10 transition-colors',
+          !url && 'cursor-default',
         )}
       >
-        {turn.content}
-      </div>
-    </div>
-  );
+        <FileText className="size-4 text-accent" />
+        <div className="min-w-0 flex-1">
+          <div className="text-body-sm text-ink truncate">{turn.document_name}</div>
+          <div className="text-caption text-stone">{turn.doctype} · review &amp; submit</div>
+        </div>
+        {url && <span className="text-caption text-accent">Open →</span>}
+      </button>
+    );
+  }
+  return null;
 }
