@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate, useParams } from '@tanstack/react-router';
+import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router';
 import Decimal from 'decimal.js';
 import {
   Plus, Trash2, Send, Save, Ban, ArrowLeft, AlertCircle, Printer,
@@ -52,6 +52,16 @@ interface DraftLine {
   uom: string;
   expense_account_id: string;
   description: string;
+  against_po_row_index?: number;
+}
+
+interface PO {
+  id: string; name: string; supplier_id: string;
+  items: Array<{
+    id: string; row_index: number; item_id?: string;
+    item_code: string; item_name: string; uom: string; rate: string;
+    qty: string; billed_qty: string;
+  }>;
 }
 
 const todayISO = () => new Date().toISOString().slice(0, 10);
@@ -62,6 +72,9 @@ const rid = () => Math.random().toString(36).slice(2);
 
 export function PurchaseInvoiceForm() {
   const { id } = useParams({ strict: false }) as { id?: string };
+  // ?po=<id> from the PO form's "Bill" action prefills supplier + remaining
+  // qty lines + against_po_row_index so submit can bump PO billed_qty.
+  const search = useSearch({ strict: false }) as { po?: string };
   const navigate = useNavigate();
   const qc = useQueryClient();
   const isNew = !id || id === 'new';
@@ -122,7 +135,15 @@ export function PurchaseInvoiceForm() {
   const [lines, setLines]                       = useState<DraftLine[]>([
     { rowId: rid(), item_code: '', item_name: '', qty: '1', rate: '0', uom: 'Unit', expense_account_id: '', description: '' },
   ]);
+  const [againstPOID, setAgainstPOID]           = useState<string>('');
   const [err, setErr] = useState<string | null>(null);
+
+  // ?po=<id> prefill source.
+  const { data: sourcePO } = useQuery({
+    queryKey: ['po', search.po],
+    queryFn:  () => api<PO>(`/accounting/purchase-orders/${search.po}`),
+    enabled:  Boolean(isNew && search.po),
+  });
 
   /* ---- hydrate from existing ---- */
   useEffect(() => {
@@ -146,6 +167,33 @@ export function PurchaseInvoiceForm() {
       description: it.description ?? '',
     })));
   }, [existing]);
+
+  // Prefill from a PO when the user clicked "Bill" on the PO form. Each
+  // line carries (qty - billed_qty) and remembers its against_po_row_index
+  // so the backend can bump billed_qty + enforce over-billing tolerance.
+  useEffect(() => {
+    if (!sourcePO || !isNew) return;
+    if (againstPOID === sourcePO.id) return;
+    setSupplierID(sourcePO.supplier_id);
+    setAgainstPOID(sourcePO.id);
+    const next: DraftLine[] = sourcePO.items.flatMap((it): DraftLine[] => {
+      const remaining = Number(it.qty) - Number(it.billed_qty);
+      if (remaining <= 0) return [];
+      return [{
+        rowId: rid(),
+        item_id: it.item_id,
+        item_code: it.item_code,
+        item_name: it.item_name,
+        uom: it.uom,
+        rate: it.rate,
+        qty: String(remaining),
+        expense_account_id: '', // user picks (or item-default fills)
+        description: '',
+        against_po_row_index: it.row_index,
+      }];
+    });
+    if (next.length > 0) setLines(next);
+  }, [sourcePO, isNew, againstPOID]);
 
   // Default payable account: first liability account when creating new
   useEffect(() => {
@@ -208,6 +256,7 @@ export function PurchaseInvoiceForm() {
         tax_template_id: taxTemplateID || undefined,
         payable_account_id: payableAccountID,
         remarks: remarks || undefined,
+        against_purchase_order_id: againstPOID || undefined,
         items: lines.map((l) => ({
           item_id: l.item_id,
           item_code: l.item_code,
@@ -217,6 +266,7 @@ export function PurchaseInvoiceForm() {
           uom: l.uom || 'Unit',
           expense_account_id: l.expense_account_id,
           description: l.description || undefined,
+          against_po_row_index: l.against_po_row_index || undefined,
         })),
       },
     }),

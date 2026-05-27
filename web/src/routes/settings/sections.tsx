@@ -1,7 +1,7 @@
 import {
   Palette, Languages, Building2, UserCog, ShieldCheck, KeyRound,
   Calculator, FileText, Mail, Plug, Wand2, Database, BookOpen, Server, Bell,
-  ScrollText, Hash, Inbox, Sparkles, type LucideIcon,
+  ScrollText, Hash, Inbox, Sparkles, ShoppingBag, type LucideIcon,
 } from 'lucide-react';
 import { AppearanceSection }    from './AppearanceSection';
 import { LocalizationSection }  from './LocalizationSection';
@@ -14,6 +14,7 @@ import { AuditLogSection }       from './AuditLogSection';
 import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { AgentUsageSection }     from './AgentUsageSection';
 import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
+import { BuyingSettingsSection }  from './BuyingSettingsSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -82,6 +83,9 @@ export const SECTIONS: SectionDef[] = [
     component: APITokensSection /* personal tokens; user can manage their own */ },
 
   // ----- Finance -----
+  { key: 'buying', group: 'finance', label: 'Buying settings', icon: ShoppingBag,
+    description: 'Tolerances and workflow gates for Material Request, PO, GRN, and PI.',
+    component: BuyingSettingsSection, requireSystem: true },
   { key: 'fiscal-years', group: 'finance', label: 'Fiscal years', icon: Calculator,
     description: 'Fiscal periods, year-end close, and period locks.',
     component: FiscalYearsSection, requireSystem: true },

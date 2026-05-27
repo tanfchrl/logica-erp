@@ -40,58 +40,62 @@ const (
 // ---- domain types ----
 
 type PurchaseInvoice struct {
-	ID                       string                            `json:"id"`
-	Name                     string                            `json:"name"`
-	CompanyID                string                            `json:"company_id"`
-	SupplierID               string                            `json:"supplier_id"`
-	PostingDate              time.Time                         `json:"posting_date"`
-	DueDate                  time.Time                         `json:"due_date"`
-	FiscalYearID             string                            `json:"fiscal_year_id"`
-	Currency                 string                            `json:"currency"`
-	ExchangeRate             decimal.Decimal                   `json:"exchange_rate"`
-	TaxTemplateID            string                            `json:"tax_template_id,omitempty"`
-	SupplierInvoiceNo        string                            `json:"supplier_invoice_no,omitempty"`
-	SupplierInvoiceDate      *time.Time                        `json:"supplier_invoice_date,omitempty"`
-	BillNo                   string                            `json:"bill_no,omitempty"`
-	NetTotal                 decimal.Decimal                   `json:"net_total"`
-	TotalTaxesAndCharges     decimal.Decimal                   `json:"total_taxes_and_charges"`
-	GrandTotal               decimal.Decimal                   `json:"grand_total"`
-	PaidAmount               decimal.Decimal                   `json:"paid_amount"`
-	OutstandingAmount        decimal.Decimal                   `json:"outstanding_amount"`
-	BaseGrandTotal           decimal.Decimal                   `json:"base_grand_total"`
-	BaseOutstandingAmount    decimal.Decimal                   `json:"base_outstanding_amount"`
-	Remarks                  string                            `json:"remarks,omitempty"`
-	PayableAccountID         string                            `json:"payable_account_id"`
-	IsReturn                 bool                              `json:"is_return"`
-	ReturnAgainst            string                            `json:"return_against,omitempty"`
-	Docstatus                submittable.Status                `json:"docstatus"`
-	SubmittedAt              *time.Time                        `json:"submitted_at,omitempty"`
-	CancelledAt              *time.Time                        `json:"cancelled_at,omitempty"`
-	CreatedAt                time.Time                         `json:"created_at"`
-	UpdatedAt                time.Time                         `json:"updated_at"`
-	Items                    []PurchaseInvoiceLine             `json:"items"`
-	Taxes                    []PurchaseInvoiceTaxRow           `json:"taxes"`
-	Withholding              []PurchaseInvoiceWithholdingRow   `json:"withholding,omitempty"`
+	ID                          string                          `json:"id"`
+	Name                        string                          `json:"name"`
+	CompanyID                   string                          `json:"company_id"`
+	SupplierID                  string                          `json:"supplier_id"`
+	PostingDate                 time.Time                       `json:"posting_date"`
+	DueDate                     time.Time                       `json:"due_date"`
+	FiscalYearID                string                          `json:"fiscal_year_id"`
+	Currency                    string                          `json:"currency"`
+	ExchangeRate                decimal.Decimal                 `json:"exchange_rate"`
+	TaxTemplateID               string                          `json:"tax_template_id,omitempty"`
+	SupplierInvoiceNo           string                          `json:"supplier_invoice_no,omitempty"`
+	SupplierInvoiceDate         *time.Time                      `json:"supplier_invoice_date,omitempty"`
+	BillNo                      string                          `json:"bill_no,omitempty"`
+	NetTotal                    decimal.Decimal                 `json:"net_total"`
+	TotalTaxesAndCharges        decimal.Decimal                 `json:"total_taxes_and_charges"`
+	GrandTotal                  decimal.Decimal                 `json:"grand_total"`
+	PaidAmount                  decimal.Decimal                 `json:"paid_amount"`
+	OutstandingAmount           decimal.Decimal                 `json:"outstanding_amount"`
+	BaseGrandTotal              decimal.Decimal                 `json:"base_grand_total"`
+	BaseOutstandingAmount       decimal.Decimal                 `json:"base_outstanding_amount"`
+	Remarks                     string                          `json:"remarks,omitempty"`
+	PayableAccountID            string                          `json:"payable_account_id"`
+	IsReturn                    bool                            `json:"is_return"`
+	ReturnAgainst               string                          `json:"return_against,omitempty"`
+	AgainstPurchaseOrderID      string                          `json:"against_purchase_order_id,omitempty"`
+	AgainstPurchaseReceiptID    string                          `json:"against_purchase_receipt_id,omitempty"`
+	Docstatus                   submittable.Status              `json:"docstatus"`
+	SubmittedAt                 *time.Time                      `json:"submitted_at,omitempty"`
+	CancelledAt                 *time.Time                      `json:"cancelled_at,omitempty"`
+	CreatedAt                   time.Time                       `json:"created_at"`
+	UpdatedAt                   time.Time                       `json:"updated_at"`
+	Items                       []PurchaseInvoiceLine           `json:"items"`
+	Taxes                       []PurchaseInvoiceTaxRow         `json:"taxes"`
+	Withholding                 []PurchaseInvoiceWithholdingRow `json:"withholding,omitempty"`
 }
 
 type PurchaseInvoiceLine struct {
-	ID               string          `json:"id"`
-	RowIndex         int             `json:"row_index"`
-	ItemID           string          `json:"item_id,omitempty"`
-	ItemCode         string          `json:"item_code"`
-	ItemName         string          `json:"item_name"`
-	Description      string          `json:"description,omitempty"`
-	Qty              decimal.Decimal `json:"qty"`
-	UOM              string          `json:"uom"`
-	Rate             decimal.Decimal `json:"rate"`
-	Amount           decimal.Decimal `json:"amount"`
-	ExpenseAccountID string          `json:"expense_account_id"`
-	CostCenterID     string          `json:"cost_center_id,omitempty"`
-	TaxAmount        decimal.Decimal `json:"tax_amount"`
-	Total            decimal.Decimal `json:"total"`
-	BaseAmount       decimal.Decimal `json:"base_amount"`
-	BaseTaxAmount    decimal.Decimal `json:"base_tax_amount"`
-	BaseTotal        decimal.Decimal `json:"base_total"`
+	ID                string          `json:"id"`
+	RowIndex          int             `json:"row_index"`
+	ItemID            string          `json:"item_id,omitempty"`
+	ItemCode          string          `json:"item_code"`
+	ItemName          string          `json:"item_name"`
+	Description       string          `json:"description,omitempty"`
+	Qty               decimal.Decimal `json:"qty"`
+	UOM               string          `json:"uom"`
+	Rate              decimal.Decimal `json:"rate"`
+	Amount            decimal.Decimal `json:"amount"`
+	ExpenseAccountID  string          `json:"expense_account_id"`
+	CostCenterID      string          `json:"cost_center_id,omitempty"`
+	TaxAmount         decimal.Decimal `json:"tax_amount"`
+	Total             decimal.Decimal `json:"total"`
+	BaseAmount        decimal.Decimal `json:"base_amount"`
+	BaseTaxAmount     decimal.Decimal `json:"base_tax_amount"`
+	BaseTotal         decimal.Decimal `json:"base_total"`
+	AgainstPOID       string          `json:"against_po_id,omitempty"`
+	AgainstPORowIndex int             `json:"against_po_row_index,omitempty"`
 }
 
 type PurchaseInvoiceTaxRow struct {
@@ -119,35 +123,38 @@ type PurchaseInvoiceWithholdingRow struct {
 // ---- input ----
 
 type PurchaseInvoiceCreateInput struct {
-	CompanyID           string                              `json:"company_id,omitempty"`
-	SupplierID          string                              `json:"supplier_id"`
-	PostingDate         string                              `json:"posting_date"`
-	DueDate             string                              `json:"due_date,omitempty"`
-	Currency            string                              `json:"currency,omitempty"`
-	ExchangeRate        string                              `json:"exchange_rate,omitempty"`
-	TaxTemplateID       string                              `json:"tax_template_id,omitempty"`
-	SupplierInvoiceNo   string                              `json:"supplier_invoice_no,omitempty"`
-	SupplierInvoiceDate string                              `json:"supplier_invoice_date,omitempty"`
-	BillNo              string                              `json:"bill_no,omitempty"`
-	Remarks             string                              `json:"remarks,omitempty"`
-	PayableAccountID    string                              `json:"payable_account_id,omitempty"`
-	IsReturn            bool                                `json:"is_return,omitempty"`
-	ReturnAgainst       string                              `json:"return_against,omitempty"`
-	Items               []PurchaseInvoiceLineInput          `json:"items"`
-	Withholding         []PurchaseInvoiceWithholdingInput   `json:"withholding,omitempty"`
-	CustomFields        map[string]any                      `json:"custom_fields,omitempty"`
+	CompanyID                string                            `json:"company_id,omitempty"`
+	SupplierID               string                            `json:"supplier_id"`
+	PostingDate              string                            `json:"posting_date"`
+	DueDate                  string                            `json:"due_date,omitempty"`
+	Currency                 string                            `json:"currency,omitempty"`
+	ExchangeRate             string                            `json:"exchange_rate,omitempty"`
+	TaxTemplateID            string                            `json:"tax_template_id,omitempty"`
+	SupplierInvoiceNo        string                            `json:"supplier_invoice_no,omitempty"`
+	SupplierInvoiceDate      string                            `json:"supplier_invoice_date,omitempty"`
+	BillNo                   string                            `json:"bill_no,omitempty"`
+	Remarks                  string                            `json:"remarks,omitempty"`
+	PayableAccountID         string                            `json:"payable_account_id,omitempty"`
+	IsReturn                 bool                              `json:"is_return,omitempty"`
+	ReturnAgainst            string                            `json:"return_against,omitempty"`
+	AgainstPurchaseOrderID   string                            `json:"against_purchase_order_id,omitempty"`
+	AgainstPurchaseReceiptID string                            `json:"against_purchase_receipt_id,omitempty"`
+	Items                    []PurchaseInvoiceLineInput        `json:"items"`
+	Withholding              []PurchaseInvoiceWithholdingInput `json:"withholding,omitempty"`
+	CustomFields             map[string]any                    `json:"custom_fields,omitempty"`
 }
 
 type PurchaseInvoiceLineInput struct {
-	ItemID           string `json:"item_id,omitempty"`
-	ItemCode         string `json:"item_code,omitempty"`
-	ItemName         string `json:"item_name,omitempty"`
-	Description      string `json:"description,omitempty"`
-	Qty              string `json:"qty"`
-	UOM              string `json:"uom,omitempty"`
-	Rate             string `json:"rate"`
-	ExpenseAccountID string `json:"expense_account_id,omitempty"`
-	CostCenterID     string `json:"cost_center_id,omitempty"`
+	ItemID            string `json:"item_id,omitempty"`
+	ItemCode          string `json:"item_code,omitempty"`
+	ItemName          string `json:"item_name,omitempty"`
+	Description       string `json:"description,omitempty"`
+	Qty               string `json:"qty"`
+	UOM               string `json:"uom,omitempty"`
+	Rate              string `json:"rate"`
+	ExpenseAccountID  string `json:"expense_account_id,omitempty"`
+	CostCenterID      string `json:"cost_center_id,omitempty"`
+	AgainstPORowIndex int    `json:"against_po_row_index,omitempty"`
 }
 
 type PurchaseInvoiceWithholdingInput struct {
@@ -163,6 +170,25 @@ type Service struct {
 	// Workflow is optional. Gates submit by role when a workflow definition
 	// exists for the doctype.
 	Workflow workflowGate
+	// BuyingSettings is optional. When set, CreateDraft + Submit consult
+	// per-company Buying Settings (over-billing tolerance, "PO required",
+	// etc). Nil is fine — treated as "no extra constraints".
+	BuyingSettings buyingSettingsProvider
+}
+
+// buyingSettingsProvider is the narrow contract Submit/Create needs from
+// buyingsettings.Service — defined locally to keep the package decoupled.
+type buyingSettingsProvider interface {
+	ForCompany(ctx context.Context, companyID string) (BuyingSettingsSnapshot, error)
+}
+
+// BuyingSettingsSnapshot is the subset of Buying Settings PI cares about.
+// Implementations marshal their fuller types into this shape.
+type BuyingSettingsSnapshot struct {
+	PORequiredForPI         bool
+	PRRequiredForPI         bool
+	OverBillingTolerancePct decimal.Decimal
+	BillForRejectedQty      bool
 }
 
 // approvalChecker is the narrow contract we need from workflow.ApprovalEngine.
@@ -338,6 +364,10 @@ func (s *Service) CreateDraft(ctx context.Context, in PurchaseInvoiceCreateInput
 				ItemID: ln.ItemID, ItemCode: itemCode, ItemName: itemName, Description: ln.Description,
 				Qty: qty, UOM: uom, Rate: rt, Amount: amount,
 				ExpenseAccountID: expAcc, CostCenterID: ln.CostCenterID,
+				AgainstPORowIndex: ln.AgainstPORowIndex,
+			}
+			if ln.AgainstPORowIndex > 0 && in.AgainstPurchaseOrderID != "" {
+				draftLines[i].AgainstPOID = in.AgainstPurchaseOrderID
 			}
 			calcLines[i] = tax.Line{Key: rowID, NetAmount: amount}
 		}
@@ -417,6 +447,38 @@ func (s *Service) CreateDraft(ctx context.Context, in PurchaseInvoiceCreateInput
 			}
 		}
 
+		// PO linkage validation (when present): supplier must match the PO,
+		// and the PO must be submitted.
+		if in.AgainstPurchaseOrderID != "" {
+			var poSupplier string
+			var poDocstatus int16
+			if err := tx.QueryRow(ctx, `SELECT supplier_id, docstatus FROM purchase_order WHERE id = $1 AND company_id = $2`,
+				in.AgainstPurchaseOrderID, in.CompanyID).Scan(&poSupplier, &poDocstatus); err != nil {
+				return fmt.Errorf("against_purchase_order_id: %w", err)
+			}
+			if poDocstatus != 1 {
+				return errors.New("against_purchase_order_id: PO must be submitted")
+			}
+			if poSupplier != in.SupplierID {
+				return errors.New("against_purchase_order_id: supplier must match the PO's supplier")
+			}
+		}
+		// Same for PR linkage.
+		if in.AgainstPurchaseReceiptID != "" {
+			var prSupplier string
+			var prDocstatus int16
+			if err := tx.QueryRow(ctx, `SELECT supplier_id, docstatus FROM purchase_receipt WHERE id = $1 AND company_id = $2`,
+				in.AgainstPurchaseReceiptID, in.CompanyID).Scan(&prSupplier, &prDocstatus); err != nil {
+				return fmt.Errorf("against_purchase_receipt_id: %w", err)
+			}
+			if prDocstatus != 1 {
+				return errors.New("against_purchase_receipt_id: GRN must be submitted")
+			}
+			if prSupplier != in.SupplierID {
+				return errors.New("against_purchase_receipt_id: supplier must match the GRN's supplier")
+			}
+		}
+
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO purchase_invoice (
 				id, name, company_id, supplier_id, posting_date, due_date, fiscal_year_id,
@@ -426,6 +488,7 @@ func (s *Service) CreateDraft(ctx context.Context, in PurchaseInvoiceCreateInput
 				base_net_total, base_total_taxes_and_charges, base_grand_total,
 				base_paid_amount, base_outstanding_amount,
 				remarks, payable_account_id, is_return, return_against,
+				against_purchase_order_id, against_purchase_receipt_id,
 				custom_fields, created_by, updated_by
 			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
 			          $14,$15,$16,
@@ -433,7 +496,8 @@ func (s *Service) CreateDraft(ctx context.Context, in PurchaseInvoiceCreateInput
 			          $17,$18,$19,
 			          0, $19,
 			          $20,$21,$22,$23,
-			          $24,$25,$25)`,
+			          $24,$25,
+			          $26,$27,$27)`,
 			id, name, in.CompanyID, in.SupplierID, pd, dueDate, fyID,
 			currency, rate, nullable(taxTemplateID), nullable(in.SupplierInvoiceNo), nullableDate(in.SupplierInvoiceDate), nullable(in.BillNo),
 			netTotal, taxTotal, grand,
@@ -441,20 +505,31 @@ func (s *Service) CreateDraft(ctx context.Context, in PurchaseInvoiceCreateInput
 			taxTotal.Mul(rate).Round(money.Precision),
 			baseGrand,
 			nullable(in.Remarks), payable, in.IsReturn, nullable(in.ReturnAgainst),
+			nullable(in.AgainstPurchaseOrderID), nullable(in.AgainstPurchaseReceiptID),
 			cf, p.UserID); err != nil {
 			return err
 		}
 
 		for _, l := range draftLines {
+			var againstPO any
+			if l.AgainstPOID != "" {
+				againstPO = l.AgainstPOID
+			}
+			var againstRow any
+			if l.AgainstPORowIndex > 0 {
+				againstRow = l.AgainstPORowIndex
+			}
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO purchase_invoice_item (
 					id, purchase_invoice_id, row_index, item_id, item_code, item_name, description,
 					qty, uom, rate, amount, expense_account_id, cost_center_id,
-					tax_amount, total, base_amount, base_tax_amount, base_total
-				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`,
+					tax_amount, total, base_amount, base_tax_amount, base_total,
+					against_po_id, against_po_row_index
+				) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`,
 				l.ID, id, l.RowIndex, nullable(l.ItemID), l.ItemCode, l.ItemName, nullable(l.Description),
 				l.Qty, l.UOM, l.Rate, l.Amount, l.ExpenseAccountID, nullable(l.CostCenterID),
-				l.TaxAmount, l.Total, l.BaseAmount, l.BaseTaxAmount, l.BaseTotal); err != nil {
+				l.TaxAmount, l.Total, l.BaseAmount, l.BaseTaxAmount, l.BaseTotal,
+				againstPO, againstRow); err != nil {
 				return err
 			}
 		}
@@ -517,6 +592,45 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 		if s.Workflow != nil {
 			if err := s.Workflow.CheckSubmitRole(ctx, tx, "purchase_invoice"); err != nil {
 				return err
+			}
+		}
+
+		// Buying Settings gates: "PO required for PI" / "PR required for PI"
+		// + over-billing tolerance per line. Skipped for is_return drafts
+		// (debit notes) since they reverse an already-billed invoice.
+		if s.BuyingSettings != nil && !pi.IsReturn {
+			bs, err := s.BuyingSettings.ForCompany(ctx, pi.CompanyID)
+			if err != nil {
+				return err
+			}
+			if bs.PORequiredForPI && pi.AgainstPurchaseOrderID == "" {
+				return errors.New("purchase_invoice: PO required by buying settings; link this PI to a Purchase Order before submitting")
+			}
+			if bs.PRRequiredForPI && pi.AgainstPurchaseReceiptID == "" {
+				return errors.New("purchase_invoice: GRN required by buying settings; link this PI to a Purchase Receipt before submitting")
+			}
+			// Over-billing tolerance: for each PO-linked line, billed_qty +
+			// this line's qty must stay within qty * (1 + tolerance/100).
+			tolerance := bs.OverBillingTolerancePct.Div(decimal.NewFromInt(100))
+			for _, l := range pi.Items {
+				if l.AgainstPOID == "" || l.AgainstPORowIndex == 0 {
+					continue
+				}
+				var poQty, poBilled decimal.Decimal
+				if err := tx.QueryRow(ctx, `
+					SELECT qty, billed_qty FROM purchase_order_item
+					WHERE purchase_order_id = $1 AND row_index = $2`,
+					l.AgainstPOID, l.AgainstPORowIndex).Scan(&poQty, &poBilled); err != nil {
+					return fmt.Errorf("items[%d]: PO row lookup: %w", l.RowIndex-1, err)
+				}
+				cap := poQty.Add(poQty.Mul(tolerance))
+				wouldBe := poBilled.Add(l.Qty)
+				if wouldBe.GreaterThan(cap) {
+					return fmt.Errorf(
+						"items[%d]: billing %s would exceed PO row %d (qty %s, already billed %s, tolerance %s%%)",
+						l.RowIndex-1, l.Qty, l.AgainstPORowIndex, poQty, poBilled, bs.OverBillingTolerancePct,
+					)
+				}
 			}
 		}
 		// Approval gate. If the workspace has active approval_rules for PI,
@@ -602,6 +716,38 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 			WHERE id = $2`, p.UserID, id); err != nil {
 			return err
 		}
+
+		// Bump PO billed_qty + recompute PO status (skip for is_return —
+		// debit notes reverse a bill, not add to it).
+		if !pi.IsReturn {
+			bumpedPOs := map[string]bool{}
+			for _, l := range pi.Items {
+				if l.AgainstPOID == "" || l.AgainstPORowIndex == 0 {
+					continue
+				}
+				if _, err := tx.Exec(ctx, `
+					UPDATE purchase_order_item
+					SET billed_qty = billed_qty + $1
+					WHERE purchase_order_id = $2 AND row_index = $3`,
+					l.Qty, l.AgainstPOID, l.AgainstPORowIndex); err != nil {
+					return err
+				}
+				bumpedPOs[l.AgainstPOID] = true
+			}
+			for poID := range bumpedPOs {
+				if err := recomputePOStatus(ctx, tx, poID); err != nil {
+					return err
+				}
+				if _, err := tx.Exec(ctx, `
+					INSERT INTO doc_link (parent_doctype, parent_id, child_doctype, child_id)
+					VALUES ($1, $2, $3, $4)
+					ON CONFLICT (parent_doctype, parent_id, child_doctype, child_id) DO NOTHING`,
+					"purchase_order", poID, Doctype, pi.ID); err != nil {
+					return err
+				}
+			}
+		}
+
 		if err := audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionSubmit, audit.Diff{}); err != nil {
 			return err
 		}
@@ -643,6 +789,30 @@ func (s *Service) Cancel(ctx context.Context, id string) (*PurchaseInvoice, erro
 			WHERE id = $2`, p.UserID, id); err != nil {
 			return err
 		}
+
+		// Reverse the billed_qty bump applied on submit.
+		if !pi.IsReturn {
+			bumpedPOs := map[string]bool{}
+			for _, l := range pi.Items {
+				if l.AgainstPOID == "" || l.AgainstPORowIndex == 0 {
+					continue
+				}
+				if _, err := tx.Exec(ctx, `
+					UPDATE purchase_order_item
+					SET billed_qty = billed_qty - $1
+					WHERE purchase_order_id = $2 AND row_index = $3`,
+					l.Qty, l.AgainstPOID, l.AgainstPORowIndex); err != nil {
+					return err
+				}
+				bumpedPOs[l.AgainstPOID] = true
+			}
+			for poID := range bumpedPOs {
+				if err := recomputePOStatus(ctx, tx, poID); err != nil {
+					return err
+				}
+			}
+		}
+
 		if err := audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionCancel, audit.Diff{}); err != nil {
 			return err
 		}
@@ -701,24 +871,29 @@ func (s *Service) List(ctx context.Context, companyID string) ([]PurchaseInvoice
 
 func load(ctx context.Context, tx pgx.Tx, id string) (*PurchaseInvoice, error) {
 	var (
-		pi                              PurchaseInvoice
-		submittedAt, cancelledAt        *time.Time
-		supplierInvoiceDate             *time.Time
-		taxTemplateID, supplierInvoiceNo *string
-		billNo, remarks, returnAgainst   *string
+		pi                                  PurchaseInvoice
+		submittedAt, cancelledAt            *time.Time
+		supplierInvoiceDate                 *time.Time
+		taxTemplateID, supplierInvoiceNo    *string
+		billNo, remarks, returnAgainst      *string
+		againstPO, againstPR                *string
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT id, name, company_id, supplier_id, posting_date, due_date, fiscal_year_id,
 		       currency, exchange_rate, tax_template_id, supplier_invoice_no, supplier_invoice_date, bill_no,
 		       net_total, total_taxes_and_charges, grand_total, paid_amount, outstanding_amount,
 		       base_grand_total, base_outstanding_amount, remarks, payable_account_id,
-		       is_return, return_against, docstatus, submitted_at, cancelled_at, created_at, updated_at
+		       is_return, return_against,
+		       against_purchase_order_id, against_purchase_receipt_id,
+		       docstatus, submitted_at, cancelled_at, created_at, updated_at
 		FROM purchase_invoice WHERE id = $1`, id).
 		Scan(&pi.ID, &pi.Name, &pi.CompanyID, &pi.SupplierID, &pi.PostingDate, &pi.DueDate, &pi.FiscalYearID,
 			&pi.Currency, &pi.ExchangeRate, &taxTemplateID, &supplierInvoiceNo, &supplierInvoiceDate, &billNo,
 			&pi.NetTotal, &pi.TotalTaxesAndCharges, &pi.GrandTotal, &pi.PaidAmount, &pi.OutstandingAmount,
 			&pi.BaseGrandTotal, &pi.BaseOutstandingAmount, &remarks, &pi.PayableAccountID,
-			&pi.IsReturn, &returnAgainst, &pi.Docstatus, &submittedAt, &cancelledAt, &pi.CreatedAt, &pi.UpdatedAt)
+			&pi.IsReturn, &returnAgainst,
+			&againstPO, &againstPR,
+			&pi.Docstatus, &submittedAt, &cancelledAt, &pi.CreatedAt, &pi.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("purchase_invoice %s not found", id)
 	}
@@ -741,13 +916,20 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*PurchaseInvoice, error) {
 	if returnAgainst != nil {
 		pi.ReturnAgainst = *returnAgainst
 	}
+	if againstPO != nil {
+		pi.AgainstPurchaseOrderID = *againstPO
+	}
+	if againstPR != nil {
+		pi.AgainstPurchaseReceiptID = *againstPR
+	}
 	pi.SubmittedAt = submittedAt
 	pi.CancelledAt = cancelledAt
 
 	rows, err := tx.Query(ctx, `
 		SELECT id, row_index, coalesce(item_id,''), item_code, item_name, coalesce(description,''),
 		       qty, uom, rate, amount, expense_account_id, coalesce(cost_center_id,''),
-		       tax_amount, total, base_amount, base_tax_amount, base_total
+		       tax_amount, total, base_amount, base_tax_amount, base_total,
+		       coalesce(against_po_id,''), coalesce(against_po_row_index, 0)
 		FROM purchase_invoice_item WHERE purchase_invoice_id = $1 ORDER BY row_index`, id)
 	if err != nil {
 		return nil, err
@@ -756,7 +938,8 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*PurchaseInvoice, error) {
 		var l PurchaseInvoiceLine
 		if err := rows.Scan(&l.ID, &l.RowIndex, &l.ItemID, &l.ItemCode, &l.ItemName, &l.Description,
 			&l.Qty, &l.UOM, &l.Rate, &l.Amount, &l.ExpenseAccountID, &l.CostCenterID,
-			&l.TaxAmount, &l.Total, &l.BaseAmount, &l.BaseTaxAmount, &l.BaseTotal); err != nil {
+			&l.TaxAmount, &l.Total, &l.BaseAmount, &l.BaseTaxAmount, &l.BaseTotal,
+			&l.AgainstPOID, &l.AgainstPORowIndex); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -884,4 +1067,54 @@ func nullableDate(s string) any {
 		return nil
 	}
 	return t
+}
+
+// recomputePOStatus runs purchaseorder.RecomputeStatus against the current
+// PO state and writes the result back. Skips manual states. Inlined here
+// rather than imported from purchaseorder/ to avoid a circular dependency
+// (PO can't import PI, PI can't import PO via its full Service type).
+func recomputePOStatus(ctx context.Context, tx pgx.Tx, poID string) error {
+	var status string
+	if err := tx.QueryRow(ctx, `SELECT status FROM purchase_order WHERE id = $1`, poID).Scan(&status); err != nil {
+		return err
+	}
+	switch status {
+	case "On Hold", "Closed", "Stopped", "Cancelled":
+		return nil
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT qty, received_qty, billed_qty FROM purchase_order_item WHERE purchase_order_id = $1`, poID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	allReceived, allBilled := true, true
+	for rows.Next() {
+		var q, r, b decimal.Decimal
+		if err := rows.Scan(&q, &r, &b); err != nil {
+			return err
+		}
+		if r.LessThan(q) {
+			allReceived = false
+		}
+		if b.LessThan(q) {
+			allBilled = false
+		}
+	}
+	var next string
+	switch {
+	case allReceived && allBilled:
+		next = "Completed"
+	case allReceived:
+		next = "To Bill"
+	case allBilled:
+		next = "To Receive"
+	default:
+		next = "To Receive and Bill"
+	}
+	if next == status {
+		return nil
+	}
+	_, err = tx.Exec(ctx, `UPDATE purchase_order SET status = $1 WHERE id = $2`, next, poID)
+	return err
 }

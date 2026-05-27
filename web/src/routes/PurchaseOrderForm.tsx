@@ -301,6 +301,13 @@ export function PurchaseOrderForm() {
                 </Link>
               </Button>
             )}
+            {submitted && existing && existing.items.some((l) => Number(l.billed_qty) < Number(l.qty)) && (
+              <Button asChild variant="secondary">
+                <Link to={'/accounting/purchase-invoices/new' as never} search={{ po: existing.id } as never}>
+                  Bill
+                </Link>
+              </Button>
+            )}
             {editable && isNew && (
               <Button onClick={onSaveDraft} loading={createMutation.isPending}>
                 <Save className="size-4" /> Save draft <Kbd>⌘S</Kbd>

@@ -26,6 +26,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/fiscalyear"
 	"github.com/tandigital/logica-erp/internal/accounting/paymententry"
 	"github.com/tandigital/logica-erp/internal/accounting/periodclosing"
+	"github.com/tandigital/logica-erp/internal/accounting/buyingsettings"
 	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
 	"github.com/tandigital/logica-erp/internal/stock/purchasereceipt"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseinvoice"
@@ -101,6 +102,8 @@ func main() {
 	poSvc := purchaseorder.NewService(db)
 	mrSvc := materialrequest.NewService(db, poSvc)
 	prSvc := purchasereceipt.NewService(db, poSvc)
+	buyingSettingsSvc := buyingsettings.NewService(db)
+	piSvc.BuyingSettings = buyingSettingsAdapter{svc: buyingSettingsSvc}
 	peSvc := paymententry.NewService(db)
 	reportSvc := reports.NewService(db)
 	pcvSvc := periodclosing.NewService(db)
@@ -244,6 +247,7 @@ func main() {
 		purchaseorder.Register(hapi, &purchaseorder.Handler{Service: poSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
 		materialrequest.Register(hapi, &materialrequest.Handler{Service: mrSvc, Perm: perm})
 		purchasereceipt.Register(hapi, &purchasereceipt.Handler{Service: prSvc, Perm: perm})
+		buyingsettings.Register(hapi, &buyingsettings.Handler{Service: buyingSettingsSvc, Perm: perm})
 		paymententry.Register(hapi, &paymententry.Handler{Service: peSvc, Perm: perm})
 		reports.Register(hapi, &reports.Handler{Service: reportSvc, Perm: perm})
 		periodclosing.Register(hapi, &periodclosing.Handler{Service: pcvSvc, Perm: perm})
@@ -307,4 +311,25 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// buyingSettingsAdapter projects the fuller buyingsettings.Settings into
+// the narrow purchaseinvoice.BuyingSettingsSnapshot the PI service depends
+// on. Keeps the PI package decoupled from the Buying Settings concrete
+// type.
+type buyingSettingsAdapter struct {
+	svc *buyingsettings.Service
+}
+
+func (a buyingSettingsAdapter) ForCompany(ctx context.Context, companyID string) (purchaseinvoice.BuyingSettingsSnapshot, error) {
+	v, err := a.svc.ForCompany(ctx, companyID)
+	if err != nil {
+		return purchaseinvoice.BuyingSettingsSnapshot{}, err
+	}
+	return purchaseinvoice.BuyingSettingsSnapshot{
+		PORequiredForPI:         v.PORequiredForPI,
+		PRRequiredForPI:         v.PRRequiredForPI,
+		OverBillingTolerancePct: v.OverBillingTolerancePct,
+		BillForRejectedQty:      v.BillForRejectedQty,
+	}, nil
 }
