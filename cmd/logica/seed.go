@@ -338,6 +338,8 @@ var phase0Doctypes = []string{
 	"period_closing_voucher",
 	// Phase 2
 	"warehouse", "stock_entry", "purchase_order", "sales_order",
+	// Procurement v1 (post-launch additions)
+	"material_request", "purchase_receipt", "buying_settings",
 	// Phase 3
 	"lead", "project", "task", "timesheet",
 	// Phase 4
