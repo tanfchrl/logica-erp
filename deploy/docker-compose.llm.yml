@@ -1,0 +1,90 @@
+# LiteLLM compose override — additive on top of docker-compose.yml (prod)
+# or docker-compose.dev.yml (dev). LiteLLM exposes an OpenAI-compatible HTTP
+# surface that fans out to Anthropic, OpenAI, OpenRouter, Together, Ollama,
+# vLLM, and 100+ other backends — so the agent service stays vendor-neutral.
+#
+# Usage:
+#
+#   # Prod stack with LiteLLM routing:
+#   docker compose \
+#     -f deploy/docker-compose.yml \
+#     -f deploy/docker-compose.llm.yml \
+#     up -d
+#
+#   # Dev with LiteLLM routing + a local Ollama backend:
+#   docker compose \
+#     -f deploy/docker-compose.dev.yml \
+#     -f deploy/docker-compose.llm.yml \
+#     --profile ollama \
+#     up -d
+#
+# Required env (in .env or shell):
+#   ANTHROPIC_API_KEY  — set if routing to Claude (otherwise leave blank)
+#   OPENAI_API_KEY     — set if routing to OpenAI (otherwise leave blank)
+#   OPENROUTER_API_KEY — set if routing to OpenRouter (otherwise leave blank)
+#
+# Resource notes:
+#   - Ollama needs ≥8 GB RAM for small models, 16 GB recommended for 14B.
+#   - LiteLLM itself is light (~200 MB RSS).
+#   - Use the `ollama` compose profile to opt-in to local inference.
+
+name: logica-llm
+
+services:
+  litellm:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: logica-litellm
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      ANTHROPIC_API_KEY:  ${ANTHROPIC_API_KEY:-}
+      OPENAI_API_KEY:     ${OPENAI_API_KEY:-}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OLLAMA_API_BASE:    http://ollama:11434
+    volumes:
+      - ./litellm_config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    depends_on: []
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:4000/health/liveliness"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Opt-in local-inference backend. Only starts when `--profile ollama` is
+  # passed to docker compose. Other litellm backends (Anthropic, OpenAI,
+  # OpenRouter) are HTTP-only and don't need a sidecar container here.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: logica-ollama
+    restart: unless-stopped
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - logica_ollama_models:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  # Override the agent's LLM endpoint to point at the LiteLLM sidecar. This
+  # is additive — the base compose's `agent` service definition still wins
+  # for everything else; only these env vars are replaced.
+  agent:
+    environment:
+      AGENT_LLM_BASE_URL: http://logica-litellm:4000
+      # AGENT_LLM_API_KEY can be anything non-empty when LiteLLM is the
+      # frontdoor — LiteLLM's own routing is what authenticates upstream.
+      AGENT_LLM_API_KEY:  ${AGENT_LLM_API_KEY:-litellm-internal}
+      # AGENT_LLM_MODEL must be a model declared in litellm_config.yaml's
+      # `model_list`. Default: `claude-sonnet` (alias defined below).
+      AGENT_LLM_MODEL:    ${AGENT_LLM_MODEL:-claude-sonnet}
+    depends_on:
+      litellm:
+        condition: service_healthy
+
+volumes:
+  logica_ollama_models:

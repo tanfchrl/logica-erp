@@ -47,6 +47,43 @@ services:
       timeout: 3s
       retries: 5
 
+  # Agent service for dev. Runs against the project source via volume mount,
+  # uses `go run` so edits hot-reload on container restart. Brings up cleanly
+  # against the existing logica-api + logica-pg containers on the
+  # logica-dev network. To enable LiteLLM-routed BYOM, layer on
+  # docker-compose.llm.yml — see that file's comment block for usage.
+  agent:
+    image: golang:1.23-alpine
+    container_name: logica-agent
+    working_dir: /src
+    volumes:
+      - ../:/src
+      - logica_agent_pnpm_cache:/root/.cache/go-build
+    ports:
+      - "8090:8090"
+    environment:
+      DATABASE_URL: postgres://logica:logica@postgres:5432/logica?sslmode=disable
+      JWT_SECRET: ${LOGICA_JWT_SECRET:-dev-jwt-secret-change-me-32bytes-min!!}
+      ERP_API_BASE: http://logica-api:8080/api/v1
+      AGENT_PORT: "8090"
+      AGENT_CONTRACTS_DIR: /src
+      # BYOM env vars — empty by default so the agent boots with a canned
+      # reply. Set these in .env (or override via compose) to enable the
+      # real ReAct loop. Any OpenAI-compatible endpoint works.
+      AGENT_LLM_BASE_URL: ${AGENT_LLM_BASE_URL:-}
+      AGENT_LLM_API_KEY:  ${AGENT_LLM_API_KEY:-}
+      AGENT_LLM_MODEL:    ${AGENT_LLM_MODEL:-gpt-4o-mini}
+    command: ["sh", "-c", "apk add --no-cache git && go run -buildvcs=false ./cmd/agent"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
 volumes:
   logica_pg_data:
   logica_minio_data:
+  logica_agent_pnpm_cache:

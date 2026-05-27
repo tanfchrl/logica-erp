@@ -1,0 +1,70 @@
+# LiteLLM model routing — read by the litellm sidecar container.
+# https://docs.litellm.ai/docs/proxy/configs
+#
+# This is an example config. Replace api_key placeholders with the env vars
+# you actually set in .env (litellm reads env vars at startup).
+#
+# The model names on the LEFT (`model_name`) are what the agent sends in its
+# request body (AGENT_LLM_MODEL). They're stable aliases that survive vendor
+# rebrands and version bumps. The RIGHT (`litellm_params.model`) is the
+# vendor-specific name LiteLLM forwards to.
+
+model_list:
+  # ---- Claude family (Anthropic direct) ----
+  - model_name: claude-sonnet           # default for AGENT_LLM_MODEL
+    litellm_params:
+      model: anthropic/claude-sonnet-4-5-20250929
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-haiku
+    litellm_params:
+      model: anthropic/claude-haiku-4-5-20251001
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: claude-opus
+    litellm_params:
+      model: anthropic/claude-opus-4-1-20250805
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # ---- OpenAI ----
+  - model_name: gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+  # ---- OpenRouter (umbrella: any model OpenRouter hosts) ----
+  - model_name: openrouter-claude-sonnet
+    litellm_params:
+      model: openrouter/anthropic/claude-sonnet-4.5
+      api_key: os.environ/OPENROUTER_API_KEY
+
+  # ---- Ollama local (opt-in via --profile ollama on the LLM compose) ----
+  - model_name: ollama-qwen
+    litellm_params:
+      model: ollama/qwen2.5:14b
+      api_base: http://ollama:11434
+
+  - model_name: ollama-llama
+    litellm_params:
+      model: ollama/llama3.1:8b
+      api_base: http://ollama:11434
+
+# Per-call telemetry + cost capture. The agent service writes its own
+# tokens_in/tokens_out to agent_audit_log; LiteLLM's cost callback is the
+# canonical source for per-call IDR cost (issue #33 surfaces this).
+litellm_settings:
+  drop_params: true       # silently strip params the backend doesn't support
+  request_timeout: 120    # match agent's HTTP client timeout
+
+# Tighten this in production: rate limits, per-key budget, etc. See
+# https://docs.litellm.ai/docs/proxy/users for the full surface.
+general_settings:
+  # Master key is sent as `Authorization: Bearer <key>` from the agent.
+  # In dev we accept any token (matches the placeholder we send). In prod
+  # set this to a real secret and propagate it as AGENT_LLM_API_KEY.
+  master_key: sk-litellm-dev-anything
