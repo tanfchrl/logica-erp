@@ -32,6 +32,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/agent/audit"
 	"github.com/tandigital/logica-erp/internal/agent/migration"
 	"github.com/tandigital/logica-erp/internal/agent/nudges"
+	"github.com/tandigital/logica-erp/internal/agent/retention"
 	"github.com/tandigital/logica-erp/internal/agent/erpclient"
 	"github.com/tandigital/logica-erp/internal/agent/llm"
 	"github.com/tandigital/logica-erp/internal/agent/policy"
@@ -89,6 +90,8 @@ func main() {
 	// calling user, never with a privileged credential).
 	nudges.SetClient(erp)
 	nudgeEval := nudges.NewEvaluator(db, registry)
+	// Daily retention sweep: sessions, audit-log partitions, approvals, nudges.
+	go retention.New(db).Run(ctx)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
