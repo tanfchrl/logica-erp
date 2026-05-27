@@ -15,6 +15,12 @@ documents:
     tier0_tools: [list_with_filters, get_by_id]
     tier1_tools: [create_draft]
     tier2_tools: []
+  - name: opportunity
+    display_name: "Opportunity"
+    api_path: "/crm/opportunities"
+    tier0_tools: [list_with_filters, get_by_id]
+    tier1_tools: [create_draft, set_stage]
+    tier2_tools: []
 system_context: |
   The CRM module manages the pre-sales pipeline. A Lead represents an
   unqualified contact captured from marketing channels, referrals, or
@@ -36,6 +42,18 @@ nudge_rules:
     cta_label: "Lihat leads"
     cta_prompt: "Tampilkan lead yang belum di-follow up dalam 7 hari terakhir."
     priority: normal
+  - id: opportunities_closing_soon
+    condition: opportunities_closing_soon
+    message_template: "{count} Opportunity dengan expected close dalam {days_window} hari ke depan."
+    cta_label: "Lihat pipeline"
+    cta_prompt: "Tampilkan opportunity yang expected close-nya dalam 14 hari ke depan."
+    priority: normal
+  - id: stale_opportunities
+    condition: stale_opportunities
+    message_template: "{count} Opportunity tidak diupdate lebih dari {days_threshold} hari."
+    cta_label: "Lihat stale"
+    cta_prompt: "Tampilkan opportunity yang stagnan, belum diupdate lebih dari 14 hari."
+    priority: high
 ---
 
 # Modul CRM

@@ -350,6 +350,32 @@ const employees: DoctypeConfig = {
   ],
 };
 
+function OppStagePill({ value }: { value: string }) {
+  switch (value) {
+    case 'prospecting':   return <StatusPill tone="neutral" withDot={false}>Prospecting</StatusPill>;
+    case 'qualification': return <StatusPill tone="info"    withDot={false}>Qualification</StatusPill>;
+    case 'proposal':      return <StatusPill tone="info"    withDot={false}>Proposal</StatusPill>;
+    case 'negotiation':   return <StatusPill tone="warning" withDot={false}>Negotiation</StatusPill>;
+    case 'closed_won':    return <StatusPill tone="success" withDot={false}>Won</StatusPill>;
+    case 'closed_lost':   return <StatusPill tone="danger"  withDot={false}>Lost</StatusPill>;
+    default:              return <StatusPill tone="neutral" withDot={false}>{value || '—'}</StatusPill>;
+  }
+}
+
+const opportunities: DoctypeConfig = {
+  slug: 'opportunities', modulePath: '/crm', module: 'CRM',
+  doctype: 'opportunity', title: 'Opportunities', singular: 'Opportunity', icon: BarChart3,
+  endpoint: '/crm/opportunities',
+  columns: [
+    codeCol('name'),
+    nameCol('subject', 'Deal', BarChart3),
+    { accessorKey: 'party_name', header: 'For', cell: (i) => <span className="text-text-secondary">{i.getValue<string>() || '—'}</span> },
+    moneyCol('amount', 'Amount'),
+    { accessorKey: 'stage', header: 'Stage', cell: (i) => <OppStagePill value={i.getValue<string>()} /> },
+    dateCol('expected_close_date', 'Closes'),
+  ],
+};
+
 const contacts: DoctypeConfig = {
   slug: 'contacts', modulePath: '/crm', module: 'CRM',
   doctype: 'contact', title: 'Contacts', singular: 'Contact', icon: UserSquare,
@@ -513,7 +539,7 @@ export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
   salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
-  employees, leads, contacts, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
+  employees, leads, contacts, opportunities, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
 };
 
 // Pretty-prints the four depreciation method enum values for tables + forms.
@@ -556,8 +582,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/crm', name: 'CRM', icon: UserSquare,
-    description: 'Leads, contacts, customers — your sales relationships.',
-    doctypes: [leads, contacts, customers],
+    description: 'Pipeline, leads, contacts, customers — your sales relationships.',
+    doctypes: [opportunities, leads, contacts, customers],
   },
   {
     path: '/projects', name: 'Operations', icon: Briefcase,

@@ -212,6 +212,35 @@ export const projectCreate: CreateSchema = {
   ],
 };
 
+export const opportunityCreate: CreateSchema = {
+  notice: 'An Opportunity is one deal in your pipeline. Pick the prospect (Lead or existing Customer), set an expected amount + close date, and drag through the stages as the deal progresses.',
+  fields: [
+    { name: 'subject', label: 'Deal title', kind: 'text', required: true, span: 2,
+      placeholder: 'e.g. PT Pelanggan — perpanjangan kontrak 2026' },
+    { name: 'opportunity_from', label: 'For type', kind: 'select', required: true, default: 'lead',
+      options: [
+        { value: 'lead',     label: 'Lead' },
+        { value: 'customer', label: 'Customer' },
+      ] },
+    { name: 'party_id', label: 'Party id', kind: 'text', required: true,
+      hint: 'Paste the id of the lead or customer. Picker UI coming next iteration.' },
+    { name: 'amount',   label: 'Expected amount', kind: 'money' },
+    { name: 'currency', label: 'Currency', kind: 'select', default: 'IDR',
+      options: [{ value: 'IDR', label: 'IDR' }, { value: 'USD', label: 'USD' }, { value: 'SGD', label: 'SGD' }] },
+    { name: 'expected_close_date', label: 'Expected close', kind: 'date' },
+    { name: 'stage', label: 'Stage', kind: 'select', default: 'prospecting',
+      options: [
+        { value: 'prospecting',   label: 'Prospecting' },
+        { value: 'qualification', label: 'Qualification' },
+        { value: 'proposal',      label: 'Proposal' },
+        { value: 'negotiation',   label: 'Negotiation' },
+        { value: 'closed_won',    label: 'Closed Won' },
+      ] },
+    { name: 'source',  label: 'Source', kind: 'text', placeholder: 'e.g. referral, web, event' },
+    { name: 'remarks', label: 'Notes', kind: 'textarea', span: 2 },
+  ],
+};
+
 export const contactCreate: CreateSchema = {
   notice: 'Contacts are people attached to a Customer, Supplier, or Lead. Mark one per organisation as Primary — that\'s the default for "copy to invoice" / email-CC.',
   fields: [
@@ -410,6 +439,7 @@ export const createSchemas: Record<string, CreateSchema> = {
   '/projects/projects':            projectCreate,
   '/support/issues':               issueCreate,
   '/crm/contacts':                 contactCreate,
+  '/crm/opportunities':            opportunityCreate,
   '/assets/assets':                assetCreate,
   '/assets/asset-categories':      assetCategoryCreate,
   '/assets/asset-movements':       assetMovementCreate,

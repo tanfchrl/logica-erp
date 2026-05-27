@@ -64,6 +64,64 @@ func init() {
 	register(Predicate{ID: "stale_leads_no_followup", Run: staleLeadsNoFollowup})
 	register(Predicate{ID: "po_overdue_receipt", Run: poOverdueReceipt})
 	register(Predicate{ID: "mr_pending_ordering", Run: mrPendingOrdering})
+	register(Predicate{ID: "opportunities_closing_soon", Run: opportunitiesClosingSoon})
+	register(Predicate{ID: "stale_opportunities", Run: staleOpportunities})
+}
+
+// opportunitiesClosingSoon: open opps (not closed_won/lost) with
+// expected_close_date within the next 14 days. Args: count, days_window.
+func opportunitiesClosingSoon(ctx context.Context, cc erpclient.CallContext) (Match, error) {
+	items, err := listItems(ctx, cc, "/crm/opportunities")
+	if err != nil {
+		return Match{}, err
+	}
+	today := time.Now().UTC()
+	cutoff := today.AddDate(0, 0, 14).Format("2006-01-02")
+	todayStr := today.Format("2006-01-02")
+	var count int
+	for _, it := range items {
+		stage, _ := it["stage"].(string)
+		if stage == "closed_won" || stage == "closed_lost" {
+			continue
+		}
+		close := stringField(it, "expected_close_date")
+		if len(close) < 10 {
+			continue
+		}
+		d := close[:10]
+		if d >= todayStr && d <= cutoff {
+			count++
+		}
+	}
+	if count == 0 {
+		return Match{}, nil
+	}
+	return Match{Matches: true, Args: map[string]any{"count": count, "days_window": 14}}, nil
+}
+
+// staleOpportunities: open opps not touched in 14+ days. Drives the
+// "your pipeline is rotting" nudge. Args: count, days_threshold.
+func staleOpportunities(ctx context.Context, cc erpclient.CallContext) (Match, error) {
+	items, err := listItems(ctx, cc, "/crm/opportunities")
+	if err != nil {
+		return Match{}, err
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -14)
+	var count int
+	for _, it := range items {
+		stage, _ := it["stage"].(string)
+		if stage == "closed_won" || stage == "closed_lost" {
+			continue
+		}
+		updated := stringField(it, "updated_at")
+		if t, err := time.Parse(time.RFC3339Nano, updated); err == nil && t.Before(cutoff) {
+			count++
+		}
+	}
+	if count == 0 {
+		return Match{}, nil
+	}
+	return Match{Matches: true, Args: map[string]any{"count": count, "days_threshold": 14}}, nil
 }
 
 // mrPendingOrdering: submitted MRs with purpose=purchase whose status is
