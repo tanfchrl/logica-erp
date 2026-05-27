@@ -117,6 +117,7 @@ func main() {
 	timelineSvc   := audit.NewTimelineService(db)
 	fySvc := fiscalyear.NewService(db)
 	identitySvc := identity.NewService(db)
+	identitySvc.SetPermissionEngine(perm) // so role/user permission edits invalidate the engine's in-process cache
 	printRenderer := platformprint.NewGotenbergRenderer(cfg.GotenbergURL)
 	printAdminSvc := platformprint.NewAdminService(db, printRenderer)
 	workflowSvc := workflow.NewService(db)

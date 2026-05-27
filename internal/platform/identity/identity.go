@@ -144,9 +144,23 @@ type SessionRow struct {
 // Service
 // ===========================================================================
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db   *dbx.DB
+	perm *permission.Engine // nil-safe; nil means cache invalidation is a no-op
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
+
+// SetPermissionEngine wires the permission engine so role/user/permission
+// mutations can invalidate its in-process cache immediately, instead of
+// waiting for the 30s TTL to drain. Optional but recommended.
+func (s *Service) SetPermissionEngine(e *permission.Engine) { s.perm = e }
+
+func (s *Service) invalidatePerms() {
+	if s.perm != nil {
+		s.perm.Invalidate()
+	}
+}
 
 // ---- Users ----
 
@@ -341,6 +355,7 @@ func (s *Service) SetUserRoles(ctx context.Context, id string, roles []string) (
 	if err != nil {
 		return nil, err
 	}
+	s.invalidatePerms()
 	return s.GetUser(ctx, id)
 }
 
@@ -359,6 +374,7 @@ func (s *Service) SetUserCompanies(ctx context.Context, id string, companies []s
 	if err != nil {
 		return nil, err
 	}
+	s.invalidatePerms()
 	return s.GetUser(ctx, id)
 }
 
@@ -521,7 +537,7 @@ func (s *Service) SetRolePermissions(ctx context.Context, roleID string, perms [
 	if p == nil {
 		return errors.New("identity: unauthenticated")
 	}
-	return s.db.Tx(ctx, func(tx pgx.Tx) error {
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `DELETE FROM role_permission WHERE role_id = $1`, roleID); err != nil {
 			return err
 		}
@@ -544,6 +560,12 @@ func (s *Service) SetRolePermissions(ctx context.Context, roleID string, perms [
 		return audit.Record(ctx, tx, DoctypeRolePermission, roleID, p.UserID, audit.ActionUpdate,
 			audit.Diff{After: map[string]any{"rows": len(perms)}})
 	})
+	if err == nil {
+		// Drop cached rolePerm rows so newly-granted access takes effect
+		// immediately instead of after the 30s TTL.
+		s.invalidatePerms()
+	}
+	return err
 }
 
 // ===========================================================================
