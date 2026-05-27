@@ -65,7 +65,7 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
           </>
         }
       />
-      <div className="flex-1 px-6 lg:px-8 pb-8">
+      <div className="flex-1 px-6 lg:px-8 pt-6 pb-8">
         <DataTable
           columns={config.columns}
           data={rows}

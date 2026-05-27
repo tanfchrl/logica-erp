@@ -314,7 +314,7 @@ export function PurchaseInvoiceForm() {
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.15 }}
-        className="flex-1 px-6 lg:px-8 pb-8 grid grid-cols-1 lg:grid-cols-[1fr,320px] gap-4 max-w-[1400px]"
+        className="flex-1 px-6 lg:px-8 pt-6 pb-8 grid grid-cols-1 lg:grid-cols-[1fr,320px] gap-4 max-w-[1400px]"
       >
         <div className="space-y-4 min-w-0">
           {cancelled && (

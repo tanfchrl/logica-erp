@@ -10,7 +10,7 @@ export function ModuleStub({ module }: { module: string }) {
   return (
     <>
       <PageHeader title={module} subtitle="Backend is live — UI lands in a future phase." />
-      <div className="flex-1 px-6 lg:px-8 pb-8">
+      <div className="flex-1 px-6 lg:px-8 pt-6 pb-8">
         <Card className="!p-12 text-center">
           <div className="inline-flex size-12 items-center justify-center rounded-full bg-accent-soft text-accent">
             <Construction className="size-6" />

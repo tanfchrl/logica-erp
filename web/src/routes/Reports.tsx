@@ -215,7 +215,7 @@ export function ReportsPage() {
         actions={null}
       />
 
-      <div className="flex-1 px-6 lg:px-8 pb-8 space-y-4 max-w-[1400px]">
+      <div className="flex-1 px-6 lg:px-8 pt-6 pb-8 space-y-4 max-w-[1400px]">
         {/* Report switcher */}
         <Card padded={false}>
           <div className="flex flex-wrap items-center gap-1.5 p-3 border-b border-border">

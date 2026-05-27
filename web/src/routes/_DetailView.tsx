@@ -69,7 +69,7 @@ export function DetailView({ config, schema }: DetailViewProps) {
         }
       />
 
-      <div className="flex-1 px-6 lg:px-8 pb-8">
+      <div className="flex-1 px-6 lg:px-8 pt-6 pb-8">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr,320px] gap-4 max-w-[1400px]">
           <div className="space-y-4 min-w-0">
             {error && (

@@ -48,7 +48,7 @@ export function CreateFormPage({ config, schema }: CreateFormPageProps) {
             </Button>
           }
         />
-        <div className="flex-1 px-6 lg:px-8 pb-8 max-w-2xl">
+        <div className="flex-1 px-6 lg:px-8 pt-6 pb-8 max-w-2xl">
           <Card className="!p-8">
             <div className="flex items-start gap-4">
               <div className="size-10 rounded-full bg-warning/10 text-warning inline-flex items-center justify-center shrink-0">
@@ -144,7 +144,7 @@ export function CreateFormPage({ config, schema }: CreateFormPageProps) {
         initial={{ opacity: 0, y: 4 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.15 }}
-        className="flex-1 px-6 lg:px-8 pb-8 max-w-3xl"
+        className="flex-1 px-6 lg:px-8 pt-6 pb-8 max-w-3xl"
       >
         {schema.notice && (
           <Card className="!p-3 mb-4 bg-warning/5 border-warning/30 flex items-start gap-3">
