@@ -51,6 +51,17 @@ interface UIState {
   setPaletteOpen: (open: boolean) => void;
   togglePalette: () => void;
 
+  // Copilot panel state. openCopilotWith() is invoked from places like the
+  // nudge bar — it opens the panel AND seeds the input/auto-sends a prompt.
+  // The panel component subscribes to (copilotOpen, copilotSeedPrompt) and
+  // handles the actual UI.
+  copilotOpen: boolean;
+  copilotSeedPrompt: string | null;
+  openCopilotWith: (prompt: string) => void;
+  closeCopilot: () => void;
+  /** Called by the panel after it consumes the seed so we don't re-send. */
+  clearCopilotSeed: () => void;
+
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
 
@@ -119,6 +130,12 @@ export const useUI = create<UIState>()((set, get) => ({
   paletteOpen: false,
   setPaletteOpen: (open) => set({ paletteOpen: open }),
   togglePalette: () => set({ paletteOpen: !get().paletteOpen }),
+
+  copilotOpen: false,
+  copilotSeedPrompt: null,
+  openCopilotWith: (prompt) => set({ copilotOpen: true, copilotSeedPrompt: prompt }),
+  closeCopilot: () => set({ copilotOpen: false }),
+  clearCopilotSeed: () => set({ copilotSeedPrompt: null }),
 
   sidebarCollapsed: false,
   toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),

@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Sparkles, X, SendHorizonal, RotateCw } from 'lucide-react';
 import { api, getAccessToken, getActiveCompany } from '@/lib/api';
 import { cn } from '@/lib/cn';
+import { useUI } from '@/store/ui';
 
 /**
  * Floating Copilot panel — slides in from the right edge over the page.
@@ -72,6 +73,11 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
+  // Seed prompt set by openCopilotWith() (e.g. from a nudge CTA). When the
+  // panel opens and a seed is pending, we fire it as a chat turn and clear
+  // the store so future opens don't re-send.
+  const copilotSeedPrompt = useUI((s) => s.copilotSeedPrompt);
+  const clearCopilotSeed = useUI((s) => s.clearCopilotSeed);
 
   // Pull contract suggested prompts via the ERP API (not the agent service)
   // so it works even before any contracts have been registered server-side.
@@ -115,6 +121,15 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
     setTimeout(() => inputRef.current?.focus(), 50);
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
+
+  // When the panel opens with a seed prompt waiting (set by openCopilotWith
+  // from somewhere else — typically a nudge CTA), auto-send it.
+  useEffect(() => {
+    if (!open || !copilotSeedPrompt) return;
+    send.mutate(copilotSeedPrompt);
+    clearCopilotSeed();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, copilotSeedPrompt]);
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

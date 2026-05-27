@@ -19,9 +19,13 @@ export function TopChrome() {
   const togglePalette = useUI((s) => s.togglePalette);
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const toggleTheme = useUI((s) => s.toggleTheme);
+  // Copilot panel state lives in the store so other components (the nudge
+  // bar) can open it with a seed prompt.
+  const copilotOpen = useUI((s) => s.copilotOpen);
+  const closeCopilot = useUI((s) => s.closeCopilot);
+  const openCopilotWith = useUI((s) => s.openCopilotWith);
 
   const [user, setUser] = useState<{ full_name: string; email: string } | null>(null);
-  const [copilotOpen, setCopilotOpen] = useState(false);
   useEffect(() => {
     me()
       .then((u) => setUser({ full_name: u.full_name || u.email, email: u.email }))
@@ -53,7 +57,7 @@ export function TopChrome() {
       <div className="ml-auto flex items-center gap-2">
         <button
           type="button"
-          onClick={() => setCopilotOpen((o) => !o)}
+          onClick={() => copilotOpen ? closeCopilot() : openCopilotWith('')}
           aria-label="Logica AI Copilot"
           className={
             'relative inline-flex items-center justify-center size-8 rounded-full transition-colors ' +
@@ -97,7 +101,7 @@ export function TopChrome() {
         </DropdownMenu>
       </div>
 
-      <CopilotPanel open={copilotOpen} onClose={() => setCopilotOpen(false)} />
+      <CopilotPanel open={copilotOpen} onClose={closeCopilot} />
     </div>
   );
 }

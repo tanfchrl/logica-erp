@@ -23,7 +23,13 @@ suggested_prompts:
   - "Daftar lead dari sumber referral bulan ini"
   - "Buat draft lead baru untuk prospek ini"
   - "Lead mana yang paling potensial dikonversi minggu ini"
-nudge_rules: []
+nudge_rules:
+  - id: stale_leads_no_followup
+    condition: stale_leads_no_followup
+    message_template: "{count} Lead belum di-follow up dalam {days_threshold} hari."
+    cta_label: "Lihat leads"
+    cta_prompt: "Tampilkan lead yang belum di-follow up dalam 7 hari terakhir."
+    priority: normal
 ---
 
 # Modul CRM

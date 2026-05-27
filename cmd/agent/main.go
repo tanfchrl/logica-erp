@@ -31,6 +31,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/agent/approvals"
 	"github.com/tandigital/logica-erp/internal/agent/audit"
 	"github.com/tandigital/logica-erp/internal/agent/migration"
+	"github.com/tandigital/logica-erp/internal/agent/nudges"
 	"github.com/tandigital/logica-erp/internal/agent/erpclient"
 	"github.com/tandigital/logica-erp/internal/agent/llm"
 	"github.com/tandigital/logica-erp/internal/agent/policy"
@@ -83,6 +84,10 @@ func main() {
 	toolReg := tools.New(erp, registry)
 	apvStore := approvals.New(db)
 	migrationSvc := migration.New(sessStore, erp)
+	// Nudge evaluator shares the ERP client (per spec: nudges query as the
+	// calling user, never with a privileged credential).
+	nudges.SetClient(erp)
+	nudgeEval := nudges.NewEvaluator(db, registry)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
@@ -116,6 +121,7 @@ func main() {
 		registerSessions(hapi, sessStore)
 		registerApprovals(hapi, apvStore, rec)
 		registerMigration(hapi, migrationSvc)
+		registerNudges(hapi, nudgeEval)
 	})
 
 	srv := &http.Server{
@@ -685,6 +691,52 @@ func registerMigration(api huma.API, svc *migration.Service) {
 	})
 }
 
+// registerNudges wires the ambient-suggestion endpoints. List is the chatty
+// one — the FE polls it; the handler triggers an evaluation if the user's
+// nudge state is stale (>15 min since last eval). Dismiss is fire-and-forget.
+func registerNudges(api huma.API, eval *nudges.Evaluator) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-active-nudges",
+		Method:      http.MethodGet,
+		Path:        "/nudges/active",
+		Summary:     "Caller's undismissed nudges. Triggers an evaluation when stale.",
+		Tags:        []string{"Agent / Nudges"},
+	}, func(ctx context.Context, _ *struct{}) (*nudgeListOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		cc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
+		// Best-effort: if eval fails (e.g. ERP API blip), the list still
+		// returns whatever is already in agent_nudge. Don't block the
+		// surface on a transient backend issue.
+		_ = eval.EnsureFresh(ctx, cc, p.UserID, co)
+		items, err := eval.Active(ctx, p.UserID, co)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &nudgeListOut{Body: nudgeListBody{Items: items}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "dismiss-nudge",
+		Method:      http.MethodPost,
+		Path:        "/nudges/{id}/dismiss",
+		Summary:     "Mark a nudge as dismissed. Re-fires only after data state changes.",
+		Tags:        []string{"Agent / Nudges"},
+	}, func(ctx context.Context, in *dismissNudgeIn) (*struct{ Body map[string]string }, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		if err := eval.Dismiss(ctx, p.UserID, in.ID); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &struct{ Body map[string]string }{Body: map[string]string{"status": "ok"}}, nil
+	})
+}
+
 // ---- HTTP types ----
 
 type (
@@ -759,6 +811,13 @@ type (
 	submitOBOut  struct{ Body submitOBBody }
 	submitOBBody struct {
 		JournalEntryID string `json:"journal_entry_id"`
+	}
+	nudgeListOut  struct{ Body nudgeListBody }
+	nudgeListBody struct {
+		Items []nudges.Nudge `json:"items"`
+	}
+	dismissNudgeIn struct {
+		ID string `path:"id"`
 	}
 )
 

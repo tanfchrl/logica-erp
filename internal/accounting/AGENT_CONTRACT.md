@@ -72,7 +72,28 @@ suggested_prompts:
   - "Buat draft sales invoice untuk customer ini"
   - "Total pembelian dari supplier ini tahun ini"
   - "Cek payment entry yang belum di-reconcile minggu ini"
-nudge_rules: []
+nudge_rules:
+  # Named-predicate ids — see internal/agent/nudges/predicates.go for the
+  # implementations. The Go code is the source of truth for what triggers
+  # each rule; the `condition` field below is the predicate id.
+  - id: overdue_sales_invoices
+    condition: overdue_sales_invoices
+    message_template: "{count} Sales Invoice melewati jatuh tempo (total {amount_idr})."
+    cta_label: "Tindak lanjut"
+    cta_prompt: "Buat draft payment reminder untuk semua invoice yang overdue."
+    priority: high
+  - id: unpaid_purchase_invoices_due_soon
+    condition: unpaid_purchase_invoices_due_soon
+    message_template: "{count} Purchase Invoice jatuh tempo dalam {days_window} hari ke depan."
+    cta_label: "Lihat"
+    cta_prompt: "Tampilkan Purchase Invoice yang jatuh tempo dalam 7 hari."
+    priority: normal
+  - id: aged_drafts_unsubmitted
+    condition: aged_drafts_unsubmitted
+    message_template: "{count} draft (SI/PI/JE) belum di-submit, sudah lebih dari {days_threshold} hari."
+    cta_label: "Lihat drafts"
+    cta_prompt: "Tampilkan semua draft yang belum di-submit lebih dari 3 hari."
+    priority: normal
 ---
 
 # Modul Akuntansi
