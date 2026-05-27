@@ -188,7 +188,12 @@ type buyingSettingsProvider interface {
 // AssetCreator is the narrow contract Submit needs from asset.Service to
 // auto-create draft assets for is_fixed_asset items. Defined locally to
 // avoid an import cycle (assets has its own audit/auth wiring).
+//
+// Enabled returns whether auto-create should run for the company. The
+// adapter consults Asset Settings; nil setting (no row yet) returns true
+// so first-time use just works.
 type AssetCreator interface {
+	Enabled(ctx context.Context, companyID string) bool
 	CreateDraftForPILine(ctx context.Context, in AssetDraftFromPI) error
 }
 
@@ -779,7 +784,7 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 		// Stash the fixed-asset draft requests for post-commit execution.
 		// We can't run them inside this Tx because asset.Service.Create
 		// opens its own transaction (nested begin would fail).
-		if s.AssetCreator != nil && !pi.IsReturn {
+		if s.AssetCreator != nil && s.AssetCreator.Enabled(ctx, pi.CompanyID) && !pi.IsReturn {
 			for _, l := range pi.Items {
 				if l.ItemID == "" {
 					continue

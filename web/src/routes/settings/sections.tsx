@@ -1,7 +1,7 @@
 import {
   Palette, Languages, Building2, UserCog, ShieldCheck, KeyRound,
   Calculator, FileText, Mail, Plug, Wand2, Database, BookOpen, Server, Bell,
-  ScrollText, Hash, Inbox, Sparkles, ShoppingBag, type LucideIcon,
+  ScrollText, Hash, Inbox, Sparkles, ShoppingBag, ClipboardList, type LucideIcon,
 } from 'lucide-react';
 import { AppearanceSection }    from './AppearanceSection';
 import { LocalizationSection }  from './LocalizationSection';
@@ -15,6 +15,7 @@ import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { AgentUsageSection }     from './AgentUsageSection';
 import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
 import { BuyingSettingsSection }  from './BuyingSettingsSection';
+import { AssetSettingsSection }   from './AssetSettingsSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -86,6 +87,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'buying', group: 'finance', label: 'Buying settings', icon: ShoppingBag,
     description: 'Tolerances and workflow gates for Material Request, PO, GRN, and PI.',
     component: BuyingSettingsSection, requireSystem: true },
+  { key: 'assets', group: 'finance', label: 'Asset settings', icon: ClipboardList,
+    description: 'Auto-create from PI, default finance book, Fixed Asset Register defaults.',
+    component: AssetSettingsSection, requireSystem: true },
   { key: 'fiscal-years', group: 'finance', label: 'Fiscal years', icon: Calculator,
     description: 'Fiscal periods, year-end close, and period locks.',
     component: FiscalYearsSection, requireSystem: true },

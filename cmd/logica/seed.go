@@ -340,6 +340,9 @@ var phase0Doctypes = []string{
 	"warehouse", "stock_entry", "purchase_order", "sales_order",
 	// Procurement v1 (post-launch additions)
 	"material_request", "purchase_receipt", "buying_settings",
+	// Assets v1 (post-launch additions)
+	"asset_category", "asset_movement", "asset_value_adjustment",
+	"finance_book", "asset_settings",
 	// Phase 3
 	"lead", "project", "task", "timesheet",
 	// Phase 4

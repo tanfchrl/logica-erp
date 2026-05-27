@@ -30,6 +30,8 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
 	"github.com/tandigital/logica-erp/internal/assets/assetcategory"
 	"github.com/tandigital/logica-erp/internal/assets/assetmovement"
+	"github.com/tandigital/logica-erp/internal/assets/assetreports"
+	"github.com/tandigital/logica-erp/internal/assets/assetsettings"
 	"github.com/tandigital/logica-erp/internal/assets/assetvalueadjustment"
 	"github.com/tandigital/logica-erp/internal/assets/financebook"
 	"github.com/tandigital/logica-erp/internal/stock/purchasereceipt"
@@ -122,9 +124,11 @@ func main() {
 	assetMovementSvc := assetmovement.NewService(db)
 	financeBookSvc := financebook.NewService(db)
 	assetVASvc := assetvalueadjustment.NewService(db)
+	assetSettingsSvc := assetsettings.NewService(db)
+	assetReportSvc := assetreports.NewService(db)
 	// PI's fixed-asset auto-create hook depends on assetSvc, declared
 	// above. Setting it here keeps the declaration order acyclic.
-	piSvc.AssetCreator = assetCreatorAdapter{svc: assetSvc}
+	piSvc.AssetCreator = assetCreatorAdapter{svc: assetSvc, settings: assetSettingsSvc}
 	empSvc := employee.NewService(db)
 	payrollSvc := hrpayroll.NewService(db)
 	posSvc := pos.NewService(db)
@@ -273,6 +277,8 @@ func main() {
 		assetmovement.Register(hapi, &assetmovement.Handler{Service: assetMovementSvc, Perm: perm})
 		financebook.Register(hapi, &financebook.Handler{Service: financeBookSvc, Perm: perm})
 		assetvalueadjustment.Register(hapi, &assetvalueadjustment.Handler{Service: assetVASvc, Perm: perm})
+		assetsettings.Register(hapi, &assetsettings.Handler{Service: assetSettingsSvc, Perm: perm})
+		assetreports.Register(hapi, &assetreports.Handler{Service: assetReportSvc, Perm: perm})
 
 		// Phase 5
 		employee.Register(hapi, &employee.Handler{Service: empSvc, Perm: perm})
@@ -338,9 +344,22 @@ type buyingSettingsAdapter struct {
 
 // assetCreatorAdapter bridges purchaseinvoice.AssetCreator (declared
 // locally there for decoupling) onto asset.Service.CreateDraftForPILine.
-// The two structs are field-for-field equivalent.
+// The two structs are field-for-field equivalent. Also gates on Asset
+// Settings — when auto_create_assets_from_pi is false, the adapter
+// short-circuits so PI submit acts as if no AssetCreator is wired.
 type assetCreatorAdapter struct {
-	svc *asset.Service
+	svc      *asset.Service
+	settings *assetsettings.Service
+}
+
+func (a assetCreatorAdapter) Enabled(ctx context.Context, companyID string) bool {
+	v, err := a.settings.ForCompany(ctx, companyID)
+	if err != nil {
+		// Cache miss on a fresh company → assume default (true) so the
+		// happy path "just works" before anyone visits Settings.
+		return true
+	}
+	return v.AutoCreateAssetsFromPI
 }
 
 func (a assetCreatorAdapter) CreateDraftForPILine(ctx context.Context, in purchaseinvoice.AssetDraftFromPI) error {
