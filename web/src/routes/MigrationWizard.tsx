@@ -7,6 +7,7 @@ import { Button } from '@/components/Button';
 import { Field, Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
 import { getAccessToken, getActiveCompany } from '@/lib/api';
+import { DataMigrationStep } from './migration/DataMigrationStep';
 
 /**
  * MigrationWizard — five-step onboarding flow described in
@@ -193,11 +194,7 @@ export function MigrationWizard() {
           />
         )}
         {step === 'data_migration' && (
-          <PlaceholderStep
-            title="Data migration"
-            description="CSV / XLSX staging pipeline. Backend endpoints /admin/imports/preview and /admin/imports/commit are already live; the wizard wrapper around them lands in a follow-up commit."
-            onSkip={() => setActiveStep('opening_balances')}
-          />
+          <DataMigrationStep onContinue={() => setActiveStep('opening_balances')} />
         )}
         {step === 'opening_balances' && (
           <PlaceholderStep
