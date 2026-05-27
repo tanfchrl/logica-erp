@@ -1,0 +1,31 @@
+{
+  "app": { "name": "Logica ERP" },
+  "actions": {
+    "logout": "Log out",
+    "save": "Save",
+    "submit": "Submit",
+    "cancel": "Cancel",
+    "new": "New",
+    "search": "Search…",
+    "filter": "Filter",
+    "export": "Export"
+  },
+  "login": {
+    "subtitle": "Sign in to continue",
+    "email": "Email",
+    "password": "Password",
+    "sign_in": "Sign in",
+    "signing_in": "Signing in…"
+  },
+  "dashboard": {
+    "welcome": "Welcome to Logica ERP"
+  },
+  "error": {
+    "unauthenticated":   "Your session has expired, please sign in again.",
+    "forbidden":         "You don't have permission for this action.",
+    "bad_credentials":   "Wrong email or password.",
+    "ledger_imbalanced": "Journal entry is not balanced.",
+    "validation_failed": "Invalid input.",
+    "internal":          "An internal error occurred."
+  }
+}

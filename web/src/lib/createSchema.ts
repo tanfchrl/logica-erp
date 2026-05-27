@@ -1,0 +1,299 @@
+/**
+ * Per-doctype create form schemas.
+ * Kept separate from the column defs so the lists file stays focused on read-side.
+ */
+
+export type FieldKind =
+  | 'text' | 'textarea' | 'number' | 'money' | 'date' | 'bool'
+  | 'select' | 'link';
+
+export interface FieldDef {
+  name: string;            // JSON key sent to backend
+  label: string;
+  kind: FieldKind;
+  required?: boolean;
+  placeholder?: string;
+  hint?: string;
+  // for 'select'
+  options?: { value: string; label: string }[];
+  // for 'link'
+  linkEndpoint?: string;   // GET endpoint that returns { items: [...] }
+  linkLabel?: string;      // field on each item to display (default: 'display_name' or 'name')
+  linkDescription?: string;
+  // optional default value
+  default?: string | number | boolean;
+  // column span 1 (half) or 2 (full)
+  span?: 1 | 2;
+}
+
+export interface CreateSchema {
+  /** Top-of-form callout text (e.g. "Quick create: line-items added later") */
+  notice?: string;
+  /** Body fields (excluding child tables — those are handled by bespoke forms) */
+  fields: FieldDef[];
+  /** Optional path to navigate to after success. Defaults to the list. */
+  redirectTo?: (id: string) => string;
+  /** Names of any required nested-table fields the backend will reject if missing.
+   *  When set, the page renders a "this needs line items" notice and redirects users
+   *  to a bespoke form (or the API docs). Used for SI/JE which already have full forms. */
+  needsChildTable?: { label: string; bespokeFormPath?: string };
+}
+
+// ---- Schemas per doctype ----
+
+export const customerCreate: CreateSchema = {
+  fields: [
+    { name: 'name',          label: 'Internal code', kind: 'text', required: true,  placeholder: 'CUST-0001', hint: 'Unique short code used in references.' },
+    { name: 'display_name',  label: 'Display name',  kind: 'text', required: true,  placeholder: 'PT Pelanggan' },
+    { name: 'npwp',          label: 'NPWP',          kind: 'text', placeholder: '16 digits', hint: 'Indonesian taxpayer number (16 digits, optional).' },
+    { name: 'is_individual', label: 'Individual?',   kind: 'bool' },
+    { name: 'email',         label: 'Email',         kind: 'text' },
+    { name: 'phone',         label: 'Phone',         kind: 'text' },
+    { name: 'default_currency', label: 'Default currency', kind: 'select',
+      options: [
+        { value: 'IDR', label: 'IDR' },
+        { value: 'USD', label: 'USD' },
+        { value: 'SGD', label: 'SGD' },
+        { value: 'EUR', label: 'EUR' },
+      ],
+      default: 'IDR',
+    },
+  ],
+};
+
+export const supplierCreate: CreateSchema = {
+  fields: [
+    { name: 'name',          label: 'Internal code', kind: 'text', required: true,  placeholder: 'SUPP-0001' },
+    { name: 'display_name',  label: 'Display name',  kind: 'text', required: true,  placeholder: 'PT Pemasok' },
+    { name: 'npwp',          label: 'NPWP',          kind: 'text', placeholder: '16 digits' },
+    { name: 'is_individual', label: 'Individual?',   kind: 'bool' },
+    { name: 'email',         label: 'Email',         kind: 'text' },
+    { name: 'phone',         label: 'Phone',         kind: 'text' },
+    { name: 'default_currency', label: 'Default currency', kind: 'select',
+      options: [
+        { value: 'IDR', label: 'IDR' },
+        { value: 'USD', label: 'USD' },
+        { value: 'SGD', label: 'SGD' },
+      ],
+      default: 'IDR',
+    },
+  ],
+};
+
+export const itemCreate: CreateSchema = {
+  fields: [
+    { name: 'code',          label: 'Code',     kind: 'text', required: true, placeholder: 'ITM-0001' },
+    { name: 'name',          label: 'Name',     kind: 'text', required: true, span: 2 },
+    { name: 'description',   label: 'Description', kind: 'textarea', span: 2 },
+    { name: 'stock_uom',     label: 'UOM',      kind: 'text', default: 'Unit' },
+    { name: 'standard_rate', label: 'Standard rate', kind: 'money' },
+    { name: 'is_stock_item', label: 'Stock item',    kind: 'bool' },
+    { name: 'is_sales_item', label: 'Sales item',    kind: 'bool', default: true },
+    { name: 'is_purchase_item', label: 'Purchase item', kind: 'bool', default: true },
+  ],
+};
+
+export const warehouseCreate: CreateSchema = {
+  fields: [
+    { name: 'name',           label: 'Name', kind: 'text', required: true },
+    { name: 'code',           label: 'Code', kind: 'text' },
+    { name: 'warehouse_type', label: 'Type', kind: 'select',
+      options: [
+        { value: '',                label: '—' },
+        { value: 'raw_material',    label: 'Raw Material' },
+        { value: 'wip',             label: 'WIP' },
+        { value: 'finished_goods',  label: 'Finished Goods' },
+        { value: 'transit',         label: 'Transit' },
+      ],
+    },
+    { name: 'account_id', label: 'Stock account', kind: 'link', linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'account_number', hint: 'Asset account that this warehouse posts to.' },
+    { name: 'is_group',   label: 'Group node?', kind: 'bool' },
+  ],
+};
+
+export const accountCreate: CreateSchema = {
+  fields: [
+    { name: 'name',           label: 'Name', kind: 'text', required: true },
+    { name: 'account_number', label: 'Number', kind: 'text' },
+    { name: 'root_type',      label: 'Root type', kind: 'select', required: true, default: 'asset',
+      options: [
+        { value: 'asset',     label: 'Asset' },
+        { value: 'liability', label: 'Liability' },
+        { value: 'equity',    label: 'Equity' },
+        { value: 'income',    label: 'Income' },
+        { value: 'expense',   label: 'Expense' },
+      ],
+    },
+    { name: 'account_type', label: 'Type', kind: 'select',
+      options: [
+        { value: '',           label: '—' },
+        { value: 'cash',       label: 'Cash' },
+        { value: 'bank',       label: 'Bank' },
+        { value: 'receivable', label: 'Receivable' },
+        { value: 'payable',    label: 'Payable' },
+        { value: 'stock',      label: 'Stock' },
+        { value: 'tax',        label: 'Tax' },
+        { value: 'cogs',       label: 'COGS' },
+        { value: 'fixed_asset',label: 'Fixed Asset' },
+        { value: 'accumulated_depreciation', label: 'Accumulated Depreciation' },
+        { value: 'depreciation', label: 'Depreciation' },
+      ],
+    },
+    { name: 'account_currency', label: 'Currency', kind: 'select', default: 'IDR',
+      options: [{ value: 'IDR', label: 'IDR' }, { value: 'USD', label: 'USD' }, { value: 'EUR', label: 'EUR' }],
+    },
+    { name: 'is_group', label: 'Group node?', kind: 'bool' },
+  ],
+};
+
+export const taxTemplateCreate: CreateSchema = {
+  notice: 'Quick create makes an empty template. Add tax lines via the API for now — full editor lands next iteration.',
+  fields: [
+    { name: 'name',    label: 'Name', kind: 'text', required: true, placeholder: 'PPN Keluaran 11%' },
+    { name: 'is_sales', label: 'Sales side?', kind: 'bool', default: true, hint: 'Off = purchase template' },
+    { name: 'is_default', label: 'Default for company', kind: 'bool' },
+  ],
+};
+
+export const employeeCreate: CreateSchema = {
+  fields: [
+    { name: 'employee_name',  label: 'Full name', kind: 'text', required: true, span: 2 },
+    { name: 'date_of_joining',label: 'Date of joining', kind: 'date', required: true },
+    { name: 'gender', label: 'Gender', kind: 'select',
+      options: [{ value: '', label: '—' }, { value: 'male', label: 'Male' }, { value: 'female', label: 'Female' }],
+    },
+    { name: 'nik',  label: 'NIK (16 digits)',  kind: 'text', placeholder: '3171012345670001' },
+    { name: 'npwp', label: 'NPWP (16 digits)', kind: 'text', placeholder: '3171012345670099' },
+    { name: 'ptkp_status', label: 'PTKP status', kind: 'select', default: 'TK/0',
+      options: ['TK/0','TK/1','TK/2','TK/3','K/0','K/1','K/2','K/3'].map((v) => ({ value: v, label: v })),
+      hint: 'For PPh 21 calculation.',
+    },
+    { name: 'email', label: 'Email', kind: 'text' },
+    { name: 'phone', label: 'Phone', kind: 'text' },
+    { name: 'bank_name',         label: 'Bank name',         kind: 'text' },
+    { name: 'bank_account_no',   label: 'Bank account no.',  kind: 'text' },
+    { name: 'bank_account_name', label: 'Bank account name', kind: 'text', span: 2 },
+  ],
+};
+
+export const leadCreate: CreateSchema = {
+  fields: [
+    { name: 'lead_name',     label: 'Company / person', kind: 'text', required: true, span: 2 },
+    { name: 'contact_email', label: 'Email', kind: 'text' },
+    { name: 'contact_phone', label: 'Phone', kind: 'text' },
+    { name: 'source', label: 'Source', kind: 'select',
+      options: ['', 'website', 'referral', 'event', 'cold_call'].map((v) => ({ value: v, label: v || '—' })),
+    },
+    { name: 'remarks', label: 'Notes', kind: 'textarea', span: 2 },
+  ],
+};
+
+export const projectCreate: CreateSchema = {
+  fields: [
+    { name: 'project_name', label: 'Name', kind: 'text', required: true, span: 2 },
+    { name: 'customer_id',  label: 'Customer', kind: 'link', linkEndpoint: '/accounting/customers', linkLabel: 'display_name', linkDescription: 'name' },
+    { name: 'start_date',   label: 'Start date',   kind: 'date' },
+    { name: 'expected_end_date', label: 'Expected end', kind: 'date' },
+    { name: 'remarks', label: 'Notes', kind: 'textarea', span: 2 },
+  ],
+};
+
+export const issueCreate: CreateSchema = {
+  fields: [
+    { name: 'subject', label: 'Subject', kind: 'text', required: true, span: 2 },
+    { name: 'description', label: 'Description', kind: 'textarea', span: 2 },
+    { name: 'priority', label: 'Priority', kind: 'select', default: 'Medium',
+      options: ['Low', 'Medium', 'High', 'Urgent'].map((v) => ({ value: v, label: v })),
+    },
+    { name: 'customer_id',  label: 'Customer', kind: 'link', linkEndpoint: '/accounting/customers', linkLabel: 'display_name', linkDescription: 'name' },
+    { name: 'contact_email', label: 'Contact email', kind: 'text' },
+  ],
+};
+
+export const assetCreate: CreateSchema = {
+  notice: 'Asset creation requires 3 accounts (asset, accumulated depreciation, dep expense). Pick them carefully.',
+  fields: [
+    { name: 'asset_name', label: 'Asset name', kind: 'text', required: true, span: 2 },
+    { name: 'purchase_date', label: 'Purchase date', kind: 'date', required: true },
+    { name: 'gross_purchase_amount', label: 'Gross amount', kind: 'money', required: true },
+    { name: 'expected_value_after_useful_life', label: 'Salvage value', kind: 'money' },
+    { name: 'useful_life_months', label: 'Useful life (months)', kind: 'number', required: true, default: 60 },
+    { name: 'asset_account_id', label: 'Asset account', kind: 'link', required: true,
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+    { name: 'accumulated_depreciation_account_id', label: 'Accumulated dep account', kind: 'link', required: true,
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+    { name: 'depreciation_expense_account_id', label: 'Dep expense account', kind: 'link', required: true,
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+  ],
+};
+
+export const bomCreate: CreateSchema = {
+  notice: 'Quick create makes an empty BOM. Add component lines via API for now — full editor lands next iteration.',
+  fields: [
+    { name: 'item_id', label: 'Finished item', kind: 'link', required: true,
+      linkEndpoint: '/accounting/items', linkLabel: 'code', linkDescription: 'name' },
+    { name: 'quantity', label: 'Output qty', kind: 'number', default: 1 },
+    { name: 'uom', label: 'UOM', kind: 'text', default: 'Unit' },
+    { name: 'is_default', label: 'Default BOM', kind: 'bool' },
+  ],
+};
+
+export const workOrderCreate: CreateSchema = {
+  fields: [
+    { name: 'bom_id', label: 'BOM', kind: 'link', required: true,
+      linkEndpoint: '/manufacturing/boms', linkLabel: 'name' },
+    { name: 'qty', label: 'Qty to manufacture', kind: 'number', required: true, default: 1 },
+    { name: 'source_warehouse_id', label: 'Source warehouse (raw)', kind: 'link', required: true,
+      linkEndpoint: '/stock/warehouses', linkLabel: 'name' },
+    { name: 'target_warehouse_id', label: 'Target warehouse (finished)', kind: 'link', required: true,
+      linkEndpoint: '/stock/warehouses', linkLabel: 'name' },
+  ],
+};
+
+// ---- Stubs for line-item-heavy docs that need bespoke forms ----
+
+export const purchaseInvoiceCreate: CreateSchema = {
+  needsChildTable: { label: 'Items + taxes', bespokeFormPath: undefined },
+  fields: [],
+};
+export const paymentEntryCreate: CreateSchema = {
+  needsChildTable: { label: 'References + deductions', bespokeFormPath: undefined },
+  fields: [],
+};
+export const stockEntryCreate: CreateSchema = {
+  needsChildTable: { label: 'Stock items (item + warehouses + qty)', bespokeFormPath: undefined },
+  fields: [],
+};
+export const posInvoiceCreate: CreateSchema = {
+  needsChildTable: { label: 'POS items', bespokeFormPath: undefined },
+  fields: [],
+};
+export const salaryStructureCreate: CreateSchema = {
+  needsChildTable: { label: 'Salary components', bespokeFormPath: undefined },
+  fields: [],
+};
+
+// Lookup by doctype config slug+modulePath (matches lib/doctypes.tsx keys)
+export const createSchemas: Record<string, CreateSchema> = {
+  '/accounting/customers':         customerCreate,
+  '/accounting/suppliers':         supplierCreate,
+  '/accounting/items':             itemCreate,
+  '/accounting/tax-templates':     taxTemplateCreate,
+  '/accounting/accounts':          accountCreate,
+  '/accounting/purchase-invoices': purchaseInvoiceCreate,
+  '/accounting/payment-entries':   paymentEntryCreate,
+  '/stock/warehouses':             warehouseCreate,
+  '/stock/stock-entries':          stockEntryCreate,
+  '/hr/employees':                 employeeCreate,
+  '/crm/leads':                    leadCreate,
+  '/projects/projects':            projectCreate,
+  '/support/issues':               issueCreate,
+  '/assets/assets':                assetCreate,
+  '/manufacturing/boms':           bomCreate,
+  '/manufacturing/work-orders':    workOrderCreate,
+  '/pos/invoices':                 posInvoiceCreate,
+};
+
+export function getCreateSchema(modulePath: string, slug: string): CreateSchema | undefined {
+  return createSchemas[`${modulePath}/${slug}`];
+}

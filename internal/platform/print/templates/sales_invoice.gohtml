@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>{{.Invoice.Name}}</title>
+<style>
+  body { font-family: -apple-system, "Segoe UI", Inter, system-ui, sans-serif; font-size: 11pt; color: #111; margin: 24px; }
+  h1 { font-size: 16pt; margin: 0 0 4px; }
+  .meta { display: flex; justify-content: space-between; margin-bottom: 24px; }
+  .meta .left { font-size: 11pt; }
+  .meta .right { text-align: right; font-size: 10pt; color: #555; }
+  table.lines { width: 100%; border-collapse: collapse; font-size: 10pt; }
+  table.lines th, table.lines td { padding: 6px 4px; border-bottom: 1px solid #ddd; }
+  table.lines thead th { background: #f4f5fa; text-align: left; font-weight: 600; }
+  table.lines td.num, table.lines th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.totals { margin-top: 16px; margin-left: auto; font-size: 10pt; }
+  table.totals td { padding: 4px 8px; }
+  table.totals td.label { text-align: right; color: #555; }
+  table.totals td.amount { text-align: right; font-variant-numeric: tabular-nums; }
+  table.totals tr.grand td { font-weight: 700; border-top: 2px solid #111; font-size: 12pt; }
+  .footer { margin-top: 32px; font-size: 9pt; color: #777; }
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #eef; color: #225; font-size: 9pt; }
+</style>
+</head>
+<body>
+
+<div class="meta">
+  <div class="left">
+    <h1>FAKTUR PAJAK / SALES INVOICE</h1>
+    <div><strong>{{.Company.LegalName}}</strong></div>
+    {{if .Company.NPWP}}<div>NPWP: {{.Company.NPWP}}</div>{{end}}
+    {{if .Company.AddressLine}}<div>{{.Company.AddressLine}}</div>{{end}}
+  </div>
+  <div class="right">
+    <div><strong>{{.Invoice.Name}}</strong></div>
+    {{if .Invoice.TaxInvoiceNumber}}<div>No. Faktur Pajak: {{.Invoice.TaxInvoiceNumber}}</div>{{end}}
+    <div>Posting Date: {{.PostingDate}}</div>
+    <div>Due Date: {{.DueDate}}</div>
+    {{if eq .Invoice.Docstatus 1}}<div class="tag">SUBMITTED</div>{{end}}
+    {{if eq .Invoice.Docstatus 2}}<div class="tag" style="background:#fee;color:#722;">CANCELLED</div>{{end}}
+  </div>
+</div>
+
+<div style="margin-bottom:16px;">
+  <strong>Bill To:</strong><br>
+  {{.Customer.DisplayName}}<br>
+  {{if .Customer.NPWP}}NPWP: {{.Customer.NPWP}}{{end}}
+</div>
+
+<table class="lines">
+  <thead><tr>
+    <th>#</th><th>Item</th><th class="num">Qty</th><th>UOM</th><th class="num">Rate</th><th class="num">Amount</th><th class="num">Tax</th><th class="num">Total</th>
+  </tr></thead>
+  <tbody>
+  {{range .Invoice.Items}}
+    <tr>
+      <td>{{.RowIndex}}</td>
+      <td><strong>{{.ItemCode}}</strong> — {{.ItemName}}{{if .Description}}<br><small>{{.Description}}</small>{{end}}</td>
+      <td class="num">{{.Qty}}</td>
+      <td>{{.UOM}}</td>
+      <td class="num">{{.Rate}}</td>
+      <td class="num">{{.Amount}}</td>
+      <td class="num">{{.TaxAmount}}</td>
+      <td class="num">{{.Total}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+
+<table class="totals">
+  <tr><td class="label">Subtotal</td><td class="amount">{{.Invoice.Currency}} {{.Invoice.NetTotal}}</td></tr>
+  {{range .Invoice.Taxes}}
+  <tr><td class="label">{{.Description}}</td><td class="amount">{{$.Invoice.Currency}} {{.TaxAmount}}</td></tr>
+  {{end}}
+  <tr class="grand"><td class="label">GRAND TOTAL</td><td class="amount">{{.Invoice.Currency}} {{.Invoice.GrandTotal}}</td></tr>
+  <tr><td class="label">Paid</td><td class="amount">{{.Invoice.Currency}} {{.Invoice.PaidAmount}}</td></tr>
+  <tr><td class="label">Outstanding</td><td class="amount">{{.Invoice.Currency}} {{.Invoice.OutstandingAmount}}</td></tr>
+</table>
+
+{{if .Invoice.Remarks}}
+<div style="margin-top:24px;">
+  <strong>Catatan:</strong> {{.Invoice.Remarks}}
+</div>
+{{end}}
+
+<div class="footer">
+  Dicetak oleh Logica ERP — {{.GeneratedAt}}
+</div>
+
+</body>
+</html>

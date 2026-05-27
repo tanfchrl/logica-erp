@@ -1,0 +1,97 @@
+name: logica
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logica}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-logica}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER:-logica}"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LOGICA_HTTP_ADDR: ":8080"
+      LOGICA_ENV: prod
+      LOGICA_DATABASE_URL: postgres://${POSTGRES_USER:-logica}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-logica}?sslmode=disable
+      LOGICA_JWT_SECRET: ${LOGICA_JWT_SECRET:?set LOGICA_JWT_SECRET in .env}
+      LOGICA_ACCESS_TOKEN_TTL: ${LOGICA_ACCESS_TOKEN_TTL:-15m}
+      LOGICA_REFRESH_TOKEN_TTL: ${LOGICA_REFRESH_TOKEN_TTL:-720h}
+      LOGICA_REFRESH_COOKIE_SECURE: "true"
+      LOGICA_CORS_ORIGINS: ${LOGICA_CORS_ORIGINS:-https://${LOGICA_DOMAIN}}
+      LOGICA_STORAGE_DRIVER: ${LOGICA_STORAGE_DRIVER:-local}
+      LOGICA_STORAGE_LOCAL_DIR: /data/uploads
+      LOGICA_GOTENBERG_URL: http://gotenberg:3000
+      LOGICA_DEFAULT_LOCALE: ${LOGICA_DEFAULT_LOCALE:-id-ID}
+      LOGICA_DEFAULT_TIMEZONE: ${LOGICA_DEFAULT_TIMEZONE:-Asia/Jakarta}
+      LOGICA_DEFAULT_CURRENCY: ${LOGICA_DEFAULT_CURRENCY:-IDR}
+    volumes:
+      - uploads:/data/uploads
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/readyz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  worker:
+    build:
+      context: ..
+      dockerfile: deploy/api.Dockerfile
+      target: worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      LOGICA_DATABASE_URL: postgres://${POSTGRES_USER:-logica}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-logica}?sslmode=disable
+      LOGICA_ENV: prod
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/web.Dockerfile
+    restart: unless-stopped
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    command:
+      - "gotenberg"
+      - "--api-timeout=30s"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      LOGICA_DOMAIN: ${LOGICA_DOMAIN:?set LOGICA_DOMAIN in .env}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pg_data:
+  uploads:
+  caddy_data:
+  caddy_config:

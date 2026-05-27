@@ -1,0 +1,52 @@
+name: logica-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: logica
+      POSTGRES_PASSWORD: logica
+      POSTGRES_DB: logica
+    ports:
+      - "5432:5432"
+    volumes:
+      - logica_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U logica -d logica"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    command:
+      - "gotenberg"
+      - "--api-timeout=30s"
+      - "--chromium-disable-javascript=false"
+      - "--chromium-allow-list=^https?://"
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: logica
+      MINIO_ROOT_PASSWORD: logica-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    command: server /data --console-address ":9001"
+    volumes:
+      - logica_minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  logica_pg_data:
+  logica_minio_data:

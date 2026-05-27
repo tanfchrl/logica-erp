@@ -1,0 +1,12 @@
+{
+    email {$ACME_EMAIL}
+}
+
+{$LOGICA_DOMAIN} {
+    encode gzip zstd
+
+    @api path /api/* /healthz /readyz /metrics
+    reverse_proxy @api api:8080
+
+    reverse_proxy web:80
+}

@@ -1,0 +1,48 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosec
+    - revive
+    - misspell
+    - bodyclose
+    - rowserrcheck
+    - sqlclosecheck
+    - nilerr
+    - contextcheck
+    - errorlint
+    - forbidigo
+  settings:
+    forbidigo:
+      # No floats in financial paths. Allow float in non-financial code via //nolint:forbidigo if needed.
+      forbid:
+        - pattern: '\bfloat32\b'
+          msg: "use shopspring/decimal for money; float32 is banned"
+        - pattern: '\bfloat64\b'
+          msg: "use shopspring/decimal for money; float64 is banned"
+      exclude-godoc-examples: true
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+          disabled: true
+  exclusions:
+    rules:
+      - path: '_test\.go$'
+        linters: [gosec, forbidigo]
+      - path: 'cmd/'
+        linters: [forbidigo]
+
+issues:
+  max-same-issues: 0
+  max-issues-per-linter: 0

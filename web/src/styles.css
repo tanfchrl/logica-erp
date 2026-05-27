@@ -1,0 +1,276 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================================
+   Design tokens — Mintlify-derived language.
+   Colours stored as space-separated RGB triplets so Tailwind's `<alpha-value>`
+   token modifier works (e.g. bg-brand-green/10).
+   ========================================================================= */
+
+:root {
+  /* Canvases */
+  --canvas:        255 255 255;   /* #ffffff */
+  --canvas-dark:    10  10  10;   /* #0a0a0a */
+  --surface:       247 247 247;   /* #f7f7f7 — section bg, search pill, sidebar active */
+  --surface-soft:  250 250 250;   /* #fafafa — quieter sections, FAQ */
+  --surface-code:   28  28  30;   /* #1c1c1e — code block bg */
+
+  /* Hairlines */
+  --hairline:       229 229 229;  /* #e5e5e5 */
+  --hairline-soft:  237 237 237;  /* #ededed */
+  --hairline-dark:   31  31  31;  /* #1f1f1f — borders on dark surfaces */
+
+  /* Text scale (6 levels) */
+  --ink:            10  10  10;   /* #0a0a0a — headlines + CTA text */
+  --charcoal:       28  28  30;   /* #1c1c1e — body + code-inline */
+  --slate:          58  58  60;   /* #3a3a3c — secondary text */
+  --steel:          90  90  92;   /* #5a5a5c — tertiary, table headers, sidebar inactive */
+  --stone:         136 136 136;   /* #888888 — captions */
+  --muted:         168 168 170;   /* #a8a8aa — disabled */
+
+  /* Primary (dominant CTA) — black-pill */
+  --primary:        10  10  10;
+  --on-primary:    255 255 255;
+  --primary-pressed: 28  28  30;
+
+  /* Brand accent — Mintlify mint, reserved for hero CTAs + active dots */
+  --brand-green:        0 212 164;
+  --brand-green-deep:   0 180 138;
+  --brand-green-soft: 124 235 203;
+  --brand-tag:         55 114 207;
+  --brand-warn:       195 125  13;
+  --brand-error:      212  86  86;
+
+  /* Inversed */
+  --on-dark:        255 255 255;
+  --on-dark-muted:  179 179 179;
+
+  /* Aliases used throughout the app */
+  --bg-app:        var(--surface-soft);
+  --bg-surface:    var(--canvas);
+  --bg-subtle:     var(--surface);
+  --border:        var(--hairline);
+  --border-strong: var(--hairline);
+  --text-primary:    var(--ink);
+  --text-secondary:  var(--slate);
+  --text-tertiary:   var(--steel);
+  --accent:        var(--brand-green);
+  --accent-hover:  var(--brand-green-deep);
+  --accent-soft:   var(--brand-green-soft);
+  --accent-fg:     var(--ink);
+
+  /* Semantic */
+  --success:        0 180 138;
+  --warning:      195 125  13;
+  --danger:       212  86  86;
+  --info:          55 114 207;
+
+  color-scheme: light;
+}
+
+.dark {
+  --canvas:         10  10  10;
+  --canvas-dark:     0   0   0;
+  --surface:        24  24  27;
+  --surface-soft:   18  18  20;
+  --surface-code:   24  24  27;
+
+  --hairline:       38  38  42;
+  --hairline-soft:  31  31  34;
+  --hairline-dark:  56  56  60;
+
+  --ink:           245 245 247;
+  --charcoal:      230 230 232;
+  --slate:         180 180 185;
+  --steel:         150 150 158;
+  --stone:         115 115 122;
+  --muted:          90  90  96;
+
+  --primary:        245 245 247;
+  --on-primary:     10  10  10;
+  --primary-pressed: 230 230 232;
+
+  --brand-green:        16 234 184;
+  --brand-green-deep:   54 220 178;
+  --brand-green-soft:   17  90  74;
+
+  color-scheme: dark;
+}
+
+/* ============================================================================
+   Base layer
+   ========================================================================= */
+
+@layer base {
+  html {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    font-feature-settings: 'cv11', 'ss01', 'ss03';
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  body {
+    background: rgb(var(--bg-app));
+    color: rgb(var(--text-primary));
+  }
+
+  *:focus-visible {
+    outline: 2px solid rgb(var(--brand-green));
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  /* Numeric data uses tabular figures so columns of money/qty align. */
+  .num, td.num, th.num {
+    font-family: 'Geist Mono', 'SF Mono', Menlo, Consolas, monospace;
+    font-feature-settings: 'tnum';
+  }
+
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: transparent; border-radius: 99px; }
+  *:hover > ::-webkit-scrollbar-thumb,
+  *:focus-within > ::-webkit-scrollbar-thumb {
+    background: rgb(var(--hairline));
+  }
+
+  ::selection {
+    background: rgb(var(--brand-green) / 0.20);
+    color: rgb(var(--ink));
+  }
+}
+
+/* ============================================================================
+   Reusable component classes
+   ========================================================================= */
+
+@layer components {
+  /* Card surface — white, hairline border, NO shadow by default. */
+  .surface-card {
+    background-color: rgb(var(--canvas));
+    border: 1px solid rgb(var(--hairline));
+    border-radius: 12px;
+  }
+
+  /* Input — 40px tall, mint focus border. Plain CSS (no @apply) so this
+     class never depends on Tailwind seeing the custom color utilities. */
+  .input-base {
+    height: 2.5rem;
+    width: 100%;
+    border-radius: 6px;
+    border: 1px solid rgb(var(--hairline));
+    background-color: rgb(var(--canvas));
+    padding: 0 0.75rem;
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+    color: rgb(var(--ink));
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+  .input-base::placeholder { color: rgb(var(--stone)); }
+  .input-base:focus {
+    outline: none;
+    border-color: rgb(var(--brand-green));
+    box-shadow: 0 0 0 2px rgb(var(--brand-green) / 0.15);
+  }
+  .input-base:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .label-base {
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+    font-weight: 500;
+    color: rgb(var(--steel));
+  }
+
+  .pill-base {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-size: 0.8125rem;
+    line-height: 1.125rem;
+    font-weight: 500;
+  }
+}
+
+/* ============================================================================
+   cmdk command palette
+   ========================================================================= */
+
+[cmdk-root] {
+  width: 100%;
+  border-radius: 12px;
+  background: rgb(var(--canvas));
+  font-family: 'Inter', system-ui, sans-serif;
+}
+
+[cmdk-input] {
+  width: 100%;
+  border: none;
+  border-bottom: 1px solid rgb(var(--hairline));
+  padding: 16px 20px;
+  font-size: 0.9375rem;
+  background: transparent;
+  color: rgb(var(--ink));
+  outline: none;
+}
+[cmdk-input]::placeholder { color: rgb(var(--stone)); }
+
+[cmdk-list] {
+  max-height: 420px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+[cmdk-group] { padding: 4px 0; }
+[cmdk-group-heading] {
+  padding: 8px 12px 4px;
+  text-transform: uppercase;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: rgb(var(--stone));
+}
+
+[cmdk-item] {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 0.875rem;
+  color: rgb(var(--ink));
+  cursor: pointer;
+  user-select: none;
+}
+
+[cmdk-item][data-selected="true"] {
+  background-color: rgb(var(--surface));
+  color: rgb(var(--ink));
+}
+
+[cmdk-empty] {
+  padding: 32px 16px;
+  text-align: center;
+  color: rgb(var(--stone));
+  font-size: 0.875rem;
+}
+
+/* Keyboard shortcut hint chip */
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px 6px;
+  min-width: 20px;
+  border: 1px solid rgb(var(--hairline));
+  border-radius: 4px;
+  background: rgb(var(--canvas));
+  color: rgb(var(--steel));
+  font-family: 'Geist Mono', 'SF Mono', monospace;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  line-height: 1;
+}

@@ -1,0 +1,31 @@
+{
+  "app": { "name": "Logica ERP" },
+  "actions": {
+    "logout": "Keluar",
+    "save": "Simpan",
+    "submit": "Submit",
+    "cancel": "Batalkan",
+    "new": "Baru",
+    "search": "Cari…",
+    "filter": "Filter",
+    "export": "Ekspor"
+  },
+  "login": {
+    "subtitle": "Masuk untuk melanjutkan",
+    "email": "Email",
+    "password": "Kata sandi",
+    "sign_in": "Masuk",
+    "signing_in": "Memproses…"
+  },
+  "dashboard": {
+    "welcome": "Selamat datang di Logica ERP"
+  },
+  "error": {
+    "unauthenticated":   "Sesi Anda telah berakhir, silakan login ulang.",
+    "forbidden":         "Anda tidak memiliki izin untuk tindakan ini.",
+    "bad_credentials":   "Email atau kata sandi salah.",
+    "ledger_imbalanced": "Jurnal tidak berimbang.",
+    "validation_failed": "Input tidak valid.",
+    "internal":          "Terjadi kesalahan internal."
+  }
+}
