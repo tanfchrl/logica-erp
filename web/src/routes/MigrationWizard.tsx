@@ -241,8 +241,18 @@ function DiscoveryStep({
           <Field label="Business type" hint="e.g. Trading, Manufacturing, Service">
             <Input value={profile.business_type} onChange={(e) => setField('business_type', e.target.value)} />
           </Field>
-          <Field label="Industry">
-            <Input value={profile.industry} onChange={(e) => setField('industry', e.target.value)} />
+          <Field label="Industry" hint="Drives the industry-specific chart-of-accounts overlay (WIP for manufacturing, retention for construction, etc.)">
+            <select
+              value={profile.industry}
+              onChange={(e) => setField('industry', e.target.value)}
+              className="w-full h-9 px-3 rounded-md border border-hairline bg-surface text-body-sm focus:outline-none focus:ring-2 focus:ring-accent">
+              <option value="">Pilih industri…</option>
+              <option value="trading">Trading / Retail (Perdagangan)</option>
+              <option value="manufacturing">Manufacturing (Manufaktur)</option>
+              <option value="services">Services (Jasa)</option>
+              <option value="construction">Construction (Konstruksi)</option>
+              <option value="other">Other / Belum yakin</option>
+            </select>
           </Field>
           <Field label="Number of employees">
             <Input

@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/tandigital/logica-erp/internal/agent/erpclient"
 	"github.com/tandigital/logica-erp/internal/agent/session"
@@ -124,9 +125,10 @@ func (s *Service) SaveProfile(ctx context.Context, userID, sessionID string, p S
 }
 
 // ProposeCOA generates a Chart of Accounts proposal from the SetupProfile.
-// For Phase-D MVP it returns a static PSAK-aligned skeleton; industry
-// customisation lands in a follow-up. The result is stored under StepData
-// so the FE can render it as an editable table before the user accepts.
+// Returns the base PSAK skeleton plus an industry-specific overlay derived
+// from SetupProfile.Industry (mapped through resolveIndustry). The result
+// is stored under StepData so the FE can render it as an editable table
+// before the user accepts.
 func (s *Service) ProposeCOA(ctx context.Context, userID, sessionID string) ([]COAAccount, error) {
 	st, err := s.LoadState(ctx, userID, sessionID)
 	if err != nil {
@@ -135,8 +137,14 @@ func (s *Service) ProposeCOA(ctx context.Context, userID, sessionID string) ([]C
 	if st.Profile == nil {
 		return nil, errors.New("migration: complete discovery interview first")
 	}
-	proposal := psakBaseCOA()
-	st.StepData[StepCOA] = map[string]any{"proposal": proposal, "accepted": false}
+	industry := resolveIndustry(st.Profile.Industry, st.Profile.BusinessType)
+	proposal := buildCOAProposal(industry)
+	data := map[string]any{
+		"proposal":          proposal,
+		"accepted":          false,
+		"resolved_industry": string(industry),
+	}
+	st.StepData[StepCOA] = data
 	if _, err := s.saveAndReturn(ctx, sessionID, st); err != nil {
 		return nil, err
 	}
@@ -266,6 +274,138 @@ func psakBaseCOA() []COAAccount {
 		{AccountNumber: "5300", Name: "Beban Gaji", RootType: "expense", AccountType: "expense", Parent: "5000"},
 		{AccountNumber: "5400", Name: "Beban Penyusutan", RootType: "expense", AccountType: "depreciation_expense", Parent: "5000"},
 	}
+}
+
+// ---- Industry overlays ----
+
+// Industry is the small enum that drives the per-industry COA overlay.
+// SetupProfile.Industry is free text — resolveIndustry maps it to one of
+// these. "Other" returns no overlay.
+type Industry string
+
+const (
+	IndustryTrading       Industry = "trading"
+	IndustryManufacturing Industry = "manufacturing"
+	IndustryServices      Industry = "services"
+	IndustryConstruction  Industry = "construction"
+	IndustryOther         Industry = "other"
+)
+
+// resolveIndustry maps the free-text Industry + BusinessType fields onto
+// the closed Industry enum. Falls back to IndustryOther — that yields the
+// plain base COA so an unknown classification doesn't break setup.
+func resolveIndustry(industry, businessType string) Industry {
+	hay := strings.ToLower(industry + " " + businessType)
+	// Order matters: "construction services" should classify as construction,
+	// not services.
+	switch {
+	case containsAny(hay, "construction", "kontraktor", "konstruksi", "contractor", "developer"):
+		return IndustryConstruction
+	case containsAny(hay, "manufactur", "manufaktur", "pabrik", "factory", "produksi"):
+		return IndustryManufacturing
+	case containsAny(hay, "trading", "retail", "ritel", "dagang", "distribu", "wholesale", "grosir", "toko", "merchant"):
+		return IndustryTrading
+	case containsAny(hay, "service", "jasa", "consult", "konsultan", "agency", "agensi", "software", "saas"):
+		return IndustryServices
+	}
+	return IndustryOther
+}
+
+func containsAny(haystack string, needles ...string) bool {
+	for _, n := range needles {
+		if strings.Contains(haystack, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// buildCOAProposal returns the base PSAK COA with the chosen industry's
+// overlay merged in. Overlay rows with the same account number REPLACE
+// the base row — that lets an overlay turn a leaf into a group (e.g.
+// Persediaan becomes a parent for raw/WIP/finished sub-accounts in
+// manufacturing). New rows are appended in their declared order so the
+// FE renders them grouped near their parents.
+func buildCOAProposal(ind Industry) []COAAccount {
+	base := psakBaseCOA()
+	overlay := industryOverlay(ind)
+	if len(overlay) == 0 {
+		return base
+	}
+	// Index base by account_number so overlays can override.
+	idx := make(map[string]int, len(base))
+	for i, a := range base {
+		idx[a.AccountNumber] = i
+	}
+	out := make([]COAAccount, len(base))
+	copy(out, base)
+	for _, a := range overlay {
+		if i, ok := idx[a.AccountNumber]; ok {
+			out[i] = a
+		} else {
+			out = append(out, a)
+			idx[a.AccountNumber] = len(out) - 1
+		}
+	}
+	return out
+}
+
+// industryOverlay returns the additional + replacement accounts for an
+// industry. Empty slice for IndustryOther. Account numbers slot into the
+// base scheme so the merged COA still flows asset → liability → equity →
+// income → expense from low to high.
+func industryOverlay(ind Industry) []COAAccount {
+	switch ind {
+	case IndustryTrading:
+		return []COAAccount{
+			// Persediaan becomes a parent group; merchandise sits under it.
+			{AccountNumber: "1140", Name: "Persediaan", RootType: "asset", IsGroup: true, Parent: "1100"},
+			{AccountNumber: "1141", Name: "Persediaan Barang Dagang", RootType: "asset", AccountType: "stock", Parent: "1140"},
+			// Contra-revenue + freight accounts are the day-one need.
+			{AccountNumber: "4150", Name: "Retur Penjualan", RootType: "income", AccountType: "income", Parent: "4000"},
+			{AccountNumber: "4160", Name: "Diskon Penjualan", RootType: "income", AccountType: "income", Parent: "4000"},
+			{AccountNumber: "5210", Name: "Beban Angkut Masuk", RootType: "expense", AccountType: "expense", Parent: "5200"},
+			{AccountNumber: "5220", Name: "Beban Angkut Keluar", RootType: "expense", AccountType: "expense", Parent: "5200"},
+		}
+
+	case IndustryManufacturing:
+		return []COAAccount{
+			// Persediaan becomes a parent — three classic buckets sit under it.
+			{AccountNumber: "1140", Name: "Persediaan", RootType: "asset", IsGroup: true, Parent: "1100"},
+			{AccountNumber: "1141", Name: "Persediaan Bahan Baku", RootType: "asset", AccountType: "stock", Parent: "1140"},
+			{AccountNumber: "1142", Name: "Persediaan Barang Dalam Proses (WIP)", RootType: "asset", AccountType: "stock", Parent: "1140"},
+			{AccountNumber: "1143", Name: "Persediaan Barang Jadi", RootType: "asset", AccountType: "stock", Parent: "1140"},
+			// HPP broken into the standard manufacturing cost buckets.
+			{AccountNumber: "5100", Name: "Harga Pokok Produksi", RootType: "expense", IsGroup: true, Parent: "5000"},
+			{AccountNumber: "5110", Name: "Beban Bahan Baku", RootType: "expense", AccountType: "cost_of_goods_sold", Parent: "5100"},
+			{AccountNumber: "5120", Name: "Beban Tenaga Kerja Langsung", RootType: "expense", AccountType: "cost_of_goods_sold", Parent: "5100"},
+			{AccountNumber: "5130", Name: "Beban Overhead Pabrik", RootType: "expense", AccountType: "cost_of_goods_sold", Parent: "5100"},
+		}
+
+	case IndustryServices:
+		return []COAAccount{
+			// Unbilled receivables + service WIP — common services pain points.
+			{AccountNumber: "1135", Name: "Piutang Belum Ditagih", RootType: "asset", AccountType: "receivable", Parent: "1100"},
+			{AccountNumber: "1145", Name: "Pekerjaan Dalam Proses Jasa", RootType: "asset", AccountType: "stock", Parent: "1100"},
+			// Deferred revenue is THE liability for retainer/subscription work.
+			{AccountNumber: "2170", Name: "Pendapatan Diterima di Muka", RootType: "liability", AccountType: "payable", Parent: "2100"},
+			// Rename revenue head to make the model obvious.
+			{AccountNumber: "4100", Name: "Pendapatan Jasa", RootType: "income", AccountType: "income", Parent: "4000"},
+		}
+
+	case IndustryConstruction:
+		return []COAAccount{
+			// Construction WIP — billings under it net to over/under-billed.
+			{AccountNumber: "1145", Name: "Pekerjaan Dalam Proses Konstruksi", RootType: "asset", AccountType: "stock", Parent: "1100"},
+			// Progress billings + retention payable.
+			{AccountNumber: "2170", Name: "Tagihan Termin Pelanggan", RootType: "liability", AccountType: "payable", Parent: "2100"},
+			{AccountNumber: "2180", Name: "Utang Retensi", RootType: "liability", AccountType: "payable", Parent: "2100"},
+			// Contract revenue + contract costs as separate heads.
+			{AccountNumber: "4100", Name: "Pendapatan Kontrak", RootType: "income", AccountType: "income", Parent: "4000"},
+			{AccountNumber: "5110", Name: "Beban Kontrak", RootType: "expense", AccountType: "cost_of_goods_sold", Parent: "5100"},
+		}
+	}
+	return nil
 }
 
 // ---- Readiness checks ----
