@@ -71,22 +71,32 @@ export function PurchaseInvoiceForm() {
     queryFn:  () => api<PurchaseInvoice>(`/accounting/purchase-invoices/${id}`),
     enabled:  !isNew,
   });
-  const { data: suppliers } = useQuery({
+  // NOTE: queryFns return the raw {items: [...]} wrapper to stay cache-compatible
+  // with other routes that use the same queryKeys (Dashboard, SI form). Unwrap at render.
+  const { data: suppliersResp } = useQuery({
     queryKey: ['suppliers'],
-    queryFn:  () => api<{ items: Supplier[] }>('/accounting/suppliers').then((r) => r.items),
+    queryFn:  () => api<{ items: Supplier[] }>('/accounting/suppliers'),
   });
-  const { data: items } = useQuery({
+  const { data: itemsResp } = useQuery({
     queryKey: ['items'],
-    queryFn:  () => api<{ items: Item[] }>('/accounting/items').then((r) => r.items),
+    queryFn:  () => api<{ items: Item[] }>('/accounting/items'),
   });
-  const { data: taxTpls } = useQuery({
+  const { data: taxResp } = useQuery({
     queryKey: ['tax-templates'],
-    queryFn:  () => api<{ items: TaxTpl[] }>('/accounting/tax-templates').then((r) => r.items.filter((t) => !t.is_sales)),
+    queryFn:  () => api<{ items: TaxTpl[] }>('/accounting/tax-templates'),
   });
-  const { data: accounts } = useQuery({
+  const { data: accountsResp } = useQuery({
     queryKey: ['accounts'],
-    queryFn:  () => api<{ items: Account[] }>('/accounting/accounts').then((r) => r.items),
+    queryFn:  () => api<{ items: Account[] }>('/accounting/accounts'),
   });
+
+  const suppliers = suppliersResp?.items;
+  const items     = itemsResp?.items;
+  const taxTpls   = useMemo(
+    () => (taxResp?.items ?? []).filter((t) => !t.is_sales),
+    [taxResp],
+  );
+  const accounts  = accountsResp?.items;
 
   // Only leaf accounts (not group/parent) can be posted to. Filter for postability.
   const expenseAccounts = useMemo(
