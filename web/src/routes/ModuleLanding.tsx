@@ -1,12 +1,19 @@
 import { Link } from '@tanstack/react-router';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, ShieldOff } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Card, CardDescription, CardTitle } from '@/components/Card';
 import { modules } from '@/lib/doctypes';
+import { useMyPermissions } from '@/lib/permissions';
 
 export function ModuleLanding({ modulePath }: { modulePath: string }) {
   const mod = modules.find((m) => m.path === modulePath);
+  const perms = useMyPermissions();
   if (!mod) return null;
+
+  // Filter the module's doctype cards by read permission. The sidebar
+  // already hides modules with zero readable doctypes; this is the
+  // belt-and-braces version for when a user navigates directly.
+  const visible = mod.doctypes.filter((dt) => perms.canRead(dt.doctype));
 
   return (
     <>
@@ -16,8 +23,22 @@ export function ModuleLanding({ modulePath }: { modulePath: string }) {
         subtitle={mod.description}
       />
       <div className="flex-1 px-6 lg:px-8 pt-6 pb-8">
+        {visible.length === 0 ? (
+          <Card className="max-w-xl">
+            <div className="flex items-start gap-3">
+              <ShieldOff className="size-5 text-stone shrink-0 mt-0.5" />
+              <div>
+                <CardTitle>No access</CardTitle>
+                <CardDescription>
+                  Your role doesn't include read permission for any document in {mod.name}.
+                  Ask an administrator to grant access in Settings → Roles &amp; permissions.
+                </CardDescription>
+              </div>
+            </div>
+          </Card>
+        ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {mod.doctypes.map((dt) => {
+          {visible.map((dt) => {
             const Icon = dt.icon;
             return (
               <Link
@@ -39,6 +60,7 @@ export function ModuleLanding({ modulePath }: { modulePath: string }) {
             );
           })}
         </div>
+        )}
       </div>
     </>
   );
