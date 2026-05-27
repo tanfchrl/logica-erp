@@ -1,4 +1,4 @@
-// Package assetsettings implements the per-company Asset Settings singleton.
+// Package assetsettings implements the per-company Asset AssetSettings singleton.
 // Same pattern as buyingsettings — short TTL cache, system-only admin API.
 package assetsettings
 
@@ -21,7 +21,7 @@ import (
 
 const Doctype = "asset_settings"
 
-type Settings struct {
+type AssetSettings struct {
 	ID                       string    `json:"id"`
 	CompanyID                string    `json:"company_id"`
 	AutoCreateAssetsFromPI   bool      `json:"auto_create_assets_from_pi"`
@@ -31,15 +31,15 @@ type Settings struct {
 	UpdatedAt                time.Time `json:"updated_at"`
 }
 
-type SaveInput struct {
+type AssetSettingsInput struct {
 	AutoCreateAssetsFromPI bool   `json:"auto_create_assets_from_pi"`
 	DefaultFinanceBookID   string `json:"default_finance_book_id,omitempty"`
 	RegisterShowZeroNBV    bool   `json:"register_show_zero_nbv"`
 	RegisterGroupBy        string `json:"register_group_by,omitempty"`
 }
 
-func Defaults(companyID string) Settings {
-	return Settings{
+func Defaults(companyID string) AssetSettings {
+	return AssetSettings{
 		CompanyID: companyID,
 		// Mirrors the migration's column defaults; AutoCreateAssetsFromPI
 		// is the deliberate-but-quiet hot path so users who set
@@ -56,7 +56,7 @@ type Service struct {
 	cache map[string]cached
 }
 type cached struct {
-	v        Settings
+	v        AssetSettings
 	loadedAt time.Time
 }
 
@@ -66,7 +66,7 @@ func NewService(db *dbx.DB) *Service {
 	return &Service{db: db, cache: map[string]cached{}}
 }
 
-func (s *Service) ForCompany(ctx context.Context, companyID string) (Settings, error) {
+func (s *Service) ForCompany(ctx context.Context, companyID string) (AssetSettings, error) {
 	if companyID == "" {
 		return Defaults(""), nil
 	}
@@ -86,9 +86,9 @@ func (s *Service) ForCompany(ctx context.Context, companyID string) (Settings, e
 	return v, nil
 }
 
-func (s *Service) loadFromDB(ctx context.Context, companyID string) (Settings, error) {
+func (s *Service) loadFromDB(ctx context.Context, companyID string) (AssetSettings, error) {
 	var (
-		v       Settings
+		v       AssetSettings
 		bookOpt *string
 	)
 	err := s.db.QueryRow(ctx, `
@@ -109,13 +109,13 @@ func (s *Service) loadFromDB(ctx context.Context, companyID string) (Settings, e
 	return v, nil
 }
 
-func (s *Service) Save(ctx context.Context, companyID string, in SaveInput) (Settings, error) {
+func (s *Service) Save(ctx context.Context, companyID string, in AssetSettingsInput) (AssetSettings, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
-		return Settings{}, errors.New("asset_settings: unauthenticated")
+		return AssetSettings{}, errors.New("asset_settings: unauthenticated")
 	}
 	if companyID == "" {
-		return Settings{}, errors.New("asset_settings: X-Company-Id required")
+		return AssetSettings{}, errors.New("asset_settings: X-Company-Id required")
 	}
 	groupBy := in.RegisterGroupBy
 	if groupBy == "" {
@@ -124,7 +124,7 @@ func (s *Service) Save(ctx context.Context, companyID string, in SaveInput) (Set
 	switch groupBy {
 	case "category", "status", "location", "none":
 	default:
-		return Settings{}, fmt.Errorf("register_group_by: invalid %q", groupBy)
+		return AssetSettings{}, fmt.Errorf("register_group_by: invalid %q", groupBy)
 	}
 	id := dbx.NewIDWithPrefix("aset")
 	if _, err := s.db.Exec(ctx, `
@@ -140,7 +140,7 @@ func (s *Service) Save(ctx context.Context, companyID string, in SaveInput) (Set
 			updated_at = now(), updated_by = EXCLUDED.updated_by`,
 		id, companyID, in.AutoCreateAssetsFromPI, nullable(in.DefaultFinanceBookID),
 		in.RegisterShowZeroNBV, groupBy, p.UserID); err != nil {
-		return Settings{}, err
+		return AssetSettings{}, err
 	}
 	s.mu.Lock()
 	delete(s.cache, companyID)
@@ -158,7 +158,7 @@ type Handler struct {
 func Register(api huma.API, h *Handler) {
 	huma.Register(api, huma.Operation{
 		OperationID: "get-asset-settings", Method: http.MethodGet,
-		Path: "/admin/asset-settings", Summary: "Get Asset Settings for the active company",
+		Path: "/admin/asset-settings", Summary: "Get Asset AssetSettings for the active company",
 		Tags: []string{"Admin / Assets"},
 	}, func(ctx context.Context, _ *struct{}) (*asOut, error) {
 		if err := requireSystem(ctx); err != nil {
@@ -176,7 +176,7 @@ func Register(api huma.API, h *Handler) {
 	})
 	huma.Register(api, huma.Operation{
 		OperationID: "save-asset-settings", Method: http.MethodPost,
-		Path: "/admin/asset-settings", Summary: "Save Asset Settings for the active company",
+		Path: "/admin/asset-settings", Summary: "Save Asset AssetSettings for the active company",
 		Tags: []string{"Admin / Assets"},
 	}, func(ctx context.Context, in *asSaveIn) (*asOut, error) {
 		if err := requireSystem(ctx); err != nil {
@@ -213,8 +213,8 @@ func nullable(s string) any {
 }
 
 type (
-	asOut    struct{ Body Settings }
+	asOut    struct{ Body AssetSettings }
 	asSaveIn struct {
-		Body SaveInput
+		Body AssetSettingsInput
 	}
 )

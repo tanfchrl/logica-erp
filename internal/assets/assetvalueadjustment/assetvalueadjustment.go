@@ -63,7 +63,7 @@ type ValueAdjustment struct {
 	UpdatedAt                   time.Time          `json:"updated_at"`
 }
 
-type CreateInput struct {
+type AssetValueAdjustmentInput struct {
 	CompanyID                   string `json:"company_id,omitempty"`
 	AssetID                     string `json:"asset_id"`
 	AdjustmentDate              string `json:"adjustment_date"`
@@ -80,7 +80,7 @@ func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
 // ---- CreateDraft ----
 
-func (s *Service) CreateDraft(ctx context.Context, in CreateInput) (*ValueAdjustment, error) {
+func (s *Service) CreateDraft(ctx context.Context, in AssetValueAdjustmentInput) (*ValueAdjustment, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
 		return nil, errors.New("asset_value_adjustment: unauthenticated")
@@ -582,7 +582,7 @@ func Register(api huma.API, h *Handler) {
 }
 
 type (
-	avaCreateIn struct{ Body CreateInput }
+	avaCreateIn struct{ Body AssetValueAdjustmentInput }
 	avaOut      struct{ Body ValueAdjustment }
 	avaListOut  struct{ Body avaListBody }
 	avaListBody struct {
