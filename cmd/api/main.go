@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/cors"
 
 	"github.com/tandigital/logica-erp/internal/accounting/account"
+	"github.com/tandigital/logica-erp/internal/agentcontract"
 	"github.com/tandigital/logica-erp/internal/accounting/company"
 	"github.com/tandigital/logica-erp/internal/accounting/customer"
 	"github.com/tandigital/logica-erp/internal/accounting/item"
@@ -115,6 +116,15 @@ func main() {
 	auditQuerySvc := audit.NewQueryService(db)
 	auditViewRec  := audit.NewViewRecorder(db)
 	timelineSvc   := audit.NewTimelineService(db)
+
+	// Agent contract registry: scans /internal/<module>/AGENT_CONTRACT.md
+	// at boot and exposes them at GET /api/v1/agent/contracts.
+	agentContracts, err := agentcontract.LoadFS(os.DirFS(cfg.AgentContractsDir), ".")
+	if err != nil {
+		logger.Error("agent contracts load", "err", err)
+		os.Exit(1)
+	}
+	logger.Info("agent contracts loaded", "summary", agentContracts.Summary())
 	fySvc := fiscalyear.NewService(db)
 	identitySvc := identity.NewService(db)
 	identitySvc.SetPermissionEngine(perm) // so role/user permission edits invalidate the engine's in-process cache
@@ -259,6 +269,7 @@ func main() {
 		notifrules.Register(hapi, &notifrules.Handler{Service: notifRuleSvc, Perm: perm})
 		sysinsights.Register(hapi, &sysinsights.Handler{Service: sysHealthSvc, Perm: perm})
 		payrollconfig.Register(hapi, &payrollconfig.Handler{Service: payrollSetSvc, Perm: perm})
+		agentcontract.Register(hapi, &agentcontract.Handler{Registry: agentContracts})
 	})
 
 	srv := &http.Server{

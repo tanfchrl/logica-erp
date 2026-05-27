@@ -66,6 +66,34 @@ services:
       dockerfile: deploy/web.Dockerfile
     restart: unless-stopped
 
+  agent:
+    build:
+      context: ..
+      dockerfile: deploy/agent.Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-logica}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-logica}?sslmode=disable
+      JWT_SECRET: ${LOGICA_JWT_SECRET}
+      ERP_API_BASE: http://api:8080/api/v1
+      AGENT_PORT: "8090"
+      # BYOM — operator points these at any OpenAI-compatible endpoint
+      # (LiteLLM, Ollama, OpenRouter, Anthropic-via-OpenAI-shim, vLLM, etc.).
+      # Leaving AGENT_LLM_BASE_URL empty makes the agent return canned
+      # replies — useful for plumbing checks before a budget is wired up.
+      AGENT_LLM_BASE_URL: ${AGENT_LLM_BASE_URL:-}
+      AGENT_LLM_API_KEY:  ${AGENT_LLM_API_KEY:-}
+      AGENT_LLM_MODEL:    ${AGENT_LLM_MODEL:-gpt-4o-mini}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   gotenberg:
     image: gotenberg/gotenberg:8
     restart: unless-stopped

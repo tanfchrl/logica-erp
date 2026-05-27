@@ -34,6 +34,11 @@ type Config struct {
 
 	GotenbergURL string
 
+	// Directory the agent contract registry scans for AGENT_CONTRACT.md files.
+	// In dev this is the repo root; in production builds, contracts are
+	// embedded into the binary so this is unused.
+	AgentContractsDir string
+
 	DefaultLocale   string
 	DefaultTimeZone string
 	DefaultCurrency string
@@ -57,6 +62,7 @@ func Load() (Config, error) {
 		S3AccessKey:     env("LOGICA_S3_ACCESS_KEY", ""),
 		S3SecretKey:     env("LOGICA_S3_SECRET_KEY", ""),
 		GotenbergURL:    env("LOGICA_GOTENBERG_URL", "http://localhost:3000"),
+		AgentContractsDir: env("LOGICA_AGENT_CONTRACTS_DIR", "/src"),
 
 		DefaultLocale:   env("LOGICA_DEFAULT_LOCALE", "id-ID"),
 		DefaultTimeZone: env("LOGICA_DEFAULT_TIMEZONE", "Asia/Jakarta"),

@@ -77,6 +77,10 @@ test-short: ## Run only fast unit tests (skip integration).
 lint: ## Run golangci-lint.
 	golangci-lint run ./...
 
+.PHONY: agent-contract-lint
+agent-contract-lint: ## Validate every AGENT_CONTRACT.md against the schema.
+	$(GO) run ./cmd/agent-contract-lint
+
 .PHONY: tidy
 tidy: ## Tidy go.mod / go.sum.
 	$(GO) mod tidy
