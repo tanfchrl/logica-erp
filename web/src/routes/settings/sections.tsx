@@ -1,7 +1,7 @@
 import {
   Palette, Languages, Building2, UserCog, ShieldCheck, KeyRound,
   Calculator, FileText, Mail, Plug, Wand2, Database, BookOpen, Server, Bell,
-  ScrollText, Hash, Inbox, type LucideIcon,
+  ScrollText, Hash, Inbox, Sparkles, type LucideIcon,
 } from 'lucide-react';
 import { AppearanceSection }    from './AppearanceSection';
 import { LocalizationSection }  from './LocalizationSection';
@@ -11,6 +11,7 @@ import { NumberingSection }     from './NumberingSection';
 import { SMTPSection }          from './SMTPSection';
 import { EmailTemplatesSection } from './EmailTemplatesSection';
 import { AuditLogSection }       from './AuditLogSection';
+import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -153,6 +154,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'audit-log', group: 'system', label: 'Audit log', icon: ScrollText,
     description: 'Who changed what, when.',
     component: AuditLogSection },
+  { key: 'agent-audit-log', group: 'system', label: 'AI audit log', icon: Sparkles,
+    description: 'Every agent prompt, tool call, proposal, approval, and policy block.',
+    component: AgentAuditLogSection },
 ];
 
 /** Sidebar grouping order + labels. */

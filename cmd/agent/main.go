@@ -78,6 +78,7 @@ func main() {
 
 	gate := policy.NewGate(policy.DefaultConfig(), registry)
 	rec := audit.New(db)
+	auditQuery := audit.NewQuery(db)
 	sessStore := session.New(db)
 	llmClient := llm.New(llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel})
 	erp := erpclient.New(erpBase)
@@ -122,6 +123,7 @@ func main() {
 		registerApprovals(hapi, apvStore, rec)
 		registerMigration(hapi, migrationSvc)
 		registerNudges(hapi, nudgeEval)
+		audit.RegisterAdmin(hapi, auditQuery)
 	})
 
 	srv := &http.Server{
