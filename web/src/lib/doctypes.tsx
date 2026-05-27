@@ -350,6 +350,25 @@ const employees: DoctypeConfig = {
   ],
 };
 
+const contacts: DoctypeConfig = {
+  slug: 'contacts', modulePath: '/crm', module: 'CRM',
+  doctype: 'contact', title: 'Contacts', singular: 'Contact', icon: UserSquare,
+  endpoint: '/crm/contacts',
+  columns: [
+    nameCol('full_name', 'Name', UserSquare),
+    { accessorKey: 'parent_doctype', header: 'Belongs to', cell: (i) => {
+        const v = i.getValue<string>();
+        const label = v === 'customer' ? 'Customer' : v === 'supplier' ? 'Supplier' : v === 'lead' ? 'Lead' : v;
+        return <StatusPill tone="neutral" withDot={false}>{label}</StatusPill>;
+    } },
+    { accessorKey: 'job_title', header: 'Title', cell: (i) => <span className="text-text-secondary">{i.getValue<string>() || '—'}</span> },
+    { accessorKey: 'email',     header: 'Email', cell: (i) => <span className="text-text-secondary">{i.getValue<string>() || '—'}</span> },
+    { accessorKey: 'phone',     header: 'Phone', cell: (i) => <span className="text-text-secondary">{i.getValue<string>() || '—'}</span> },
+    { accessorKey: 'is_primary', header: 'Primary?',
+      cell: (i) => i.getValue<boolean>() ? <StatusPill tone="accent" withDot={false}>Primary</StatusPill> : <span className="text-text-tertiary">—</span> },
+  ],
+};
+
 const leads: DoctypeConfig = {
   slug: 'leads', modulePath: '/crm', module: 'CRM',
   doctype: 'lead', title: 'Leads', singular: 'Lead', icon: UserSquare,
@@ -494,7 +513,7 @@ export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
   salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
-  employees, leads, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
+  employees, leads, contacts, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
 };
 
 // Pretty-prints the four depreciation method enum values for tables + forms.
@@ -537,8 +556,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/crm', name: 'CRM', icon: UserSquare,
-    description: 'Leads and the conversion funnel.',
-    doctypes: [leads, customers],
+    description: 'Leads, contacts, customers — your sales relationships.',
+    doctypes: [leads, contacts, customers],
   },
   {
     path: '/projects', name: 'Operations', icon: Briefcase,

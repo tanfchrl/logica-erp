@@ -212,6 +212,27 @@ export const projectCreate: CreateSchema = {
   ],
 };
 
+export const contactCreate: CreateSchema = {
+  notice: 'Contacts are people attached to a Customer, Supplier, or Lead. Mark one per organisation as Primary — that\'s the default for "copy to invoice" / email-CC.',
+  fields: [
+    { name: 'first_name',    label: 'First name', kind: 'text', required: true },
+    { name: 'last_name',     label: 'Last name',  kind: 'text' },
+    { name: 'parent_doctype', label: 'Belongs to type', kind: 'select', required: true, default: 'customer',
+      options: [
+        { value: 'customer', label: 'Customer' },
+        { value: 'supplier', label: 'Supplier' },
+        { value: 'lead',     label: 'Lead' },
+      ] },
+    { name: 'parent_id',     label: 'Belongs to (id)', kind: 'text', required: true,
+      hint: 'Paste the id of the customer/supplier/lead this person works at. Picker UI coming next iteration.' },
+    { name: 'job_title',     label: 'Job title', kind: 'text' },
+    { name: 'email',         label: 'Email',     kind: 'text' },
+    { name: 'phone',         label: 'Phone',     kind: 'text' },
+    { name: 'is_primary',    label: 'Primary contact', kind: 'bool',
+      hint: 'Replaces any existing primary on this parent.' },
+  ],
+};
+
 export const issueCreate: CreateSchema = {
   fields: [
     { name: 'subject', label: 'Subject', kind: 'text', required: true, span: 2 },
@@ -388,6 +409,7 @@ export const createSchemas: Record<string, CreateSchema> = {
   '/crm/leads':                    leadCreate,
   '/projects/projects':            projectCreate,
   '/support/issues':               issueCreate,
+  '/crm/contacts':                 contactCreate,
   '/assets/assets':                assetCreate,
   '/assets/asset-categories':      assetCategoryCreate,
   '/assets/asset-movements':       assetMovementCreate,

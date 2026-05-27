@@ -43,6 +43,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/supplier"
 	"github.com/tandigital/logica-erp/internal/accounting/taxtemplate"
 	"github.com/tandigital/logica-erp/internal/assets/asset"
+	"github.com/tandigital/logica-erp/internal/crm/contact"
 	"github.com/tandigital/logica-erp/internal/crm/lead"
 	"github.com/tandigital/logica-erp/internal/hr/employee"
 	hrpayroll "github.com/tandigital/logica-erp/internal/hr/payroll"
@@ -117,6 +118,7 @@ func main() {
 	whSvc := warehouse.NewService(db)
 	steSvc := stockentry.NewService(db)
 	leadSvc := lead.NewService(db)
+	contactSvc := contact.NewService(db)
 	projSvc := project.NewService(db)
 	bomSvc := bom.NewService(db)
 	woSvc := workorder.NewService(db)
@@ -271,6 +273,7 @@ func main() {
 		warehouse.Register(hapi, &warehouse.Handler{Service: whSvc, Perm: perm})
 		stockentry.Register(hapi, &stockentry.Handler{Service: steSvc, Perm: perm})
 		lead.Register(hapi, &lead.Handler{Service: leadSvc, Perm: perm})
+		contact.Register(hapi, &contact.Handler{Service: contactSvc, Perm: perm})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})
 		workorder.Register(hapi, &workorder.Handler{Service: woSvc, Perm: perm})
