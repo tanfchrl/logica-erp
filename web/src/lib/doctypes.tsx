@@ -409,6 +409,19 @@ const workOrders: DoctypeConfig = {
   hasNew: false,
 };
 
+const assetCategories: DoctypeConfig = {
+  slug: 'asset-categories', modulePath: '/assets', module: 'Asset & Inventory',
+  doctype: 'asset_category', title: 'Asset Categories', singular: 'Asset Category', icon: Tag,
+  endpoint: '/assets/asset-categories',
+  columns: [
+    nameCol('name', 'Category', Tag),
+    { accessorKey: 'default_depreciation_method', header: 'Method',
+      cell: (i) => <span className="text-text-secondary">{depreciationMethodLabel(i.getValue<string>())}</span> },
+    { accessorKey: 'total_useful_life_months', header: 'Useful life (mo)',
+      cell: (i) => <span className="num text-text-secondary">{i.getValue<number>()}</span>, meta: { align: 'right' } },
+  ],
+};
+
 const assets: DoctypeConfig = {
   slug: 'assets', modulePath: '/assets', module: 'Asset & Inventory',
   doctype: 'asset', title: 'Assets', singular: 'Asset', icon: ClipboardList,
@@ -451,8 +464,19 @@ export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
   salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
-  employees, leads, projects, boms, workOrders, assets, issues,
+  employees, leads, projects, boms, workOrders, assets, assetCategories, issues,
 };
+
+// Pretty-prints the four depreciation method enum values for tables + forms.
+export function depreciationMethodLabel(m: string): string {
+  switch (m) {
+    case 'straight_line':      return 'Straight line';
+    case 'written_down_value': return 'Written down value';
+    case 'declining_balance':  return 'Double declining';
+    case 'manual':             return 'Manual';
+    default:                   return m || '—';
+  }
+}
 
 // Module index — for the module landing pages.
 export const modules: { path: string; name: string; icon: LucideIcon; doctypes: DoctypeConfig[]; description: string }[] = [
@@ -499,7 +523,7 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   {
     path: '/assets', name: 'Asset & Inventory', icon: ClipboardList,
     description: 'Fixed-asset register and depreciation.',
-    doctypes: [assets],
+    doctypes: [assets, assetCategories],
   },
   {
     path: '/support', name: 'Helpdesk', icon: Headphones,

@@ -28,6 +28,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/periodclosing"
 	"github.com/tandigital/logica-erp/internal/accounting/buyingsettings"
 	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
+	"github.com/tandigital/logica-erp/internal/assets/assetcategory"
 	"github.com/tandigital/logica-erp/internal/stock/purchasereceipt"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseinvoice"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseorder"
@@ -114,6 +115,7 @@ func main() {
 	bomSvc := bom.NewService(db)
 	woSvc := workorder.NewService(db)
 	assetSvc := asset.NewService(db)
+	assetCategorySvc := assetcategory.NewService(db)
 	empSvc := employee.NewService(db)
 	payrollSvc := hrpayroll.NewService(db)
 	posSvc := pos.NewService(db)
@@ -258,6 +260,7 @@ func main() {
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})
 		workorder.Register(hapi, &workorder.Handler{Service: woSvc, Perm: perm})
 		asset.Register(hapi, &asset.Handler{Service: assetSvc, Perm: perm})
+		assetcategory.Register(hapi, &assetcategory.Handler{Service: assetCategorySvc, Perm: perm})
 
 		// Phase 5
 		employee.Register(hapi, &employee.Handler{Service: empSvc, Perm: perm})

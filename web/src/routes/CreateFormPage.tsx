@@ -44,7 +44,32 @@ export function CreateFormPage({ config, schema, editMode = false }: CreateFormP
     return obj;
   }, [schema]);
   const [values, setValues] = useState<Record<string, any>>(initial);
-  const set = (name: string, v: any) => setValues((s) => ({ ...s, [name]: v }));
+  const set = (name: string, v: any) => {
+    setValues((s) => ({ ...s, [name]: v }));
+    // schema.prefillFromLink — when the trigger field changes, GET the linked
+    // resource and copy mapped properties onto local fields. Empty-string
+    // selections clear the dependent fields so the user starts clean if they
+    // switch categories.
+    if (schema.prefillFromLink && name === schema.prefillFromLink.triggerField) {
+      const cfg = schema.prefillFromLink;
+      if (!v) {
+        const cleared: Record<string, any> = {};
+        for (const local of Object.keys(cfg.mapping)) cleared[local] = '';
+        setValues((s) => ({ ...s, ...cleared }));
+        return;
+      }
+      const endpoint = cfg.fetchEndpoint.replace('{id}', String(v));
+      api<Record<string, any>>(endpoint).then((rec) => {
+        const next: Record<string, any> = {};
+        for (const [local, remote] of Object.entries(cfg.mapping)) {
+          if (rec[remote] !== undefined && rec[remote] !== null && rec[remote] !== '') {
+            next[local] = rec[remote];
+          }
+        }
+        if (Object.keys(next).length > 0) setValues((s) => ({ ...s, ...next }));
+      }).catch(() => { /* silent — user can still fill manually */ });
+    }
+  };
 
   // Hydrate from existing record when it arrives.
   useEffect(() => {

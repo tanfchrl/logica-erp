@@ -37,6 +37,15 @@ export interface CreateSchema {
    *  When set, the page renders a "this needs line items" notice and redirects users
    *  to a bespoke form (or the API docs). Used for SI/JE which already have full forms. */
   needsChildTable?: { label: string; bespokeFormPath?: string };
+  /** When `triggerField` (a link) changes, fetch from `fetchEndpoint` (with `{id}`
+   *  replaced) and copy the named properties onto matching local form fields.
+   *  Used by Asset → Asset Category to pre-fill the four config fields. */
+  prefillFromLink?: {
+    triggerField: string;
+    fetchEndpoint: string;
+    /** Maps local form field name → property name on the fetched resource. */
+    mapping: Record<string, string>;
+  };
 }
 
 // ---- Schemas per doctype ----
@@ -211,18 +220,61 @@ export const issueCreate: CreateSchema = {
 };
 
 export const assetCreate: CreateSchema = {
-  notice: 'Asset creation requires 3 accounts (asset, accumulated depreciation, dep expense). Pick them carefully.',
+  notice: 'Pick an Asset Category to auto-fill the depreciation method, useful life, and the three GL accounts. You can still override per asset.',
   fields: [
     { name: 'asset_name', label: 'Asset name', kind: 'text', required: true, span: 2 },
+    { name: 'asset_category_id', label: 'Category', kind: 'link',
+      linkEndpoint: '/assets/asset-categories', linkLabel: 'name', linkDescription: 'default_depreciation_method',
+      hint: 'Drives the four defaults below.' },
     { name: 'purchase_date', label: 'Purchase date', kind: 'date', required: true },
     { name: 'gross_purchase_amount', label: 'Gross amount', kind: 'money', required: true },
     { name: 'expected_value_after_useful_life', label: 'Salvage value', kind: 'money' },
     { name: 'useful_life_months', label: 'Useful life (months)', kind: 'number', required: true, default: 60 },
+    { name: 'depreciation_method', label: 'Method', kind: 'select', default: 'straight_line',
+      options: [
+        { value: 'straight_line',      label: 'Straight line' },
+        { value: 'written_down_value', label: 'Written down value' },
+        { value: 'manual',             label: 'Manual' },
+      ] },
     { name: 'asset_account_id', label: 'Asset account', kind: 'link', required: true,
       linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
     { name: 'accumulated_depreciation_account_id', label: 'Accumulated dep account', kind: 'link', required: true,
       linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
     { name: 'depreciation_expense_account_id', label: 'Dep expense account', kind: 'link', required: true,
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+  ],
+  // Picking a category triggers the CreateFormPage helper below to overwrite
+  // the dependent fields with the category's defaults.
+  prefillFromLink: {
+    triggerField: 'asset_category_id',
+    fetchEndpoint: '/assets/asset-categories/{id}',
+    mapping: {
+      depreciation_method:                       'default_depreciation_method',
+      useful_life_months:                        'total_useful_life_months',
+      asset_account_id:                          'asset_account_id',
+      accumulated_depreciation_account_id:       'accumulated_depreciation_account_id',
+      depreciation_expense_account_id:           'depreciation_expense_account_id',
+    },
+  },
+};
+
+export const assetCategoryCreate: CreateSchema = {
+  notice: 'Categories let you stamp consistent depreciation defaults onto every new asset. Useful life is in months (e.g. 48 = 4 years).',
+  fields: [
+    { name: 'name', label: 'Category name', kind: 'text', required: true, span: 2,
+      hint: 'e.g. "Vehicles", "IT equipment", "Furniture".' },
+    { name: 'default_depreciation_method', label: 'Default method', kind: 'select', default: 'straight_line',
+      options: [
+        { value: 'straight_line',      label: 'Straight line' },
+        { value: 'written_down_value', label: 'Written down value' },
+        { value: 'manual',             label: 'Manual' },
+      ] },
+    { name: 'total_useful_life_months', label: 'Useful life (months)', kind: 'number', required: true, default: 60 },
+    { name: 'asset_account_id', label: 'Default asset account', kind: 'link',
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+    { name: 'accumulated_depreciation_account_id', label: 'Default accumulated dep account', kind: 'link',
+      linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
+    { name: 'depreciation_expense_account_id', label: 'Default dep expense account', kind: 'link',
       linkEndpoint: '/accounting/accounts', linkLabel: 'name', linkDescription: 'root_type' },
   ],
 };
@@ -289,6 +341,7 @@ export const createSchemas: Record<string, CreateSchema> = {
   '/projects/projects':            projectCreate,
   '/support/issues':               issueCreate,
   '/assets/assets':                assetCreate,
+  '/assets/asset-categories':      assetCategoryCreate,
   '/manufacturing/boms':           bomCreate,
   '/manufacturing/work-orders':    workOrderCreate,
   '/pos/invoices':                 posInvoiceCreate,
