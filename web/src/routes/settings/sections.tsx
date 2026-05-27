@@ -13,6 +13,7 @@ import { EmailTemplatesSection } from './EmailTemplatesSection';
 import { AuditLogSection }       from './AuditLogSection';
 import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { AgentUsageSection }     from './AgentUsageSection';
+import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -163,6 +164,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'agent-usage', group: 'system', label: 'AI usage & cost', icon: Sparkles,
     description: 'Token use and IDR cost by day, user, and model.',
     component: AgentUsageSection, requireSystem: true },
+  { key: 'ai-policy-limits', group: 'system', label: 'AI policy limits', icon: ShieldCheck,
+    description: 'Per-doctype IDR caps the agent must stay under on Tier-1 drafts.',
+    component: AIPolicyLimitsSection, requireSystem: true },
 ];
 
 /** Sidebar grouping order + labels. */

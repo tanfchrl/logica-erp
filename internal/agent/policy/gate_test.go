@@ -4,8 +4,28 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/tandigital/logica-erp/internal/agentcontract"
 )
+
+// fakeLimits is a fixed LimitProvider for the threshold tests.
+type fakeLimits struct {
+	global map[string]ValueLimit            // keyed by doctype
+	byCo   map[string]map[string]ValueLimit // company → doctype → limit
+}
+
+func (f *fakeLimits) LimitFor(doctype, companyID string) (ValueLimit, bool) {
+	if companyID != "" {
+		if m, ok := f.byCo[companyID]; ok {
+			if v, ok := m[doctype]; ok {
+				return v, true
+			}
+		}
+	}
+	v, ok := f.global[doctype]
+	return v, ok
+}
 
 // fixtureRegistry returns a small registry covering the gate's full state
 // space: a doctype with all three tiers populated + a "list-only" doctype
@@ -184,6 +204,158 @@ func TestGate_Table(t *testing.T) {
 				t.Errorf("Tier: want %s got %s", c.wantTier, d.Tier)
 			}
 		})
+	}
+}
+
+func TestCheckPayload_BelowCapAllows(t *testing.T) {
+	t.Parallel()
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(50_000_000), Label: "Rp 50 juta"},
+	}})
+	d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{
+		"grand_total": "10000000", // 10M < 50M
+	})
+	if !d.Allowed {
+		t.Errorf("expected allowed under cap, got reason=%q", d.Reason)
+	}
+}
+
+func TestCheckPayload_AboveCapBlocks(t *testing.T) {
+	t.Parallel()
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(50_000_000), Label: "Rp 50 juta"},
+	}})
+	d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{
+		"grand_total": "75000000", // 75M > 50M
+	})
+	if d.Allowed {
+		t.Fatal("expected block above cap")
+	}
+	if !containsSubstr(d.Reason, "exceeds") || !containsSubstr(d.Reason, "Rp 50 juta") {
+		t.Errorf("reason should name the breach + the cap label, got %q", d.Reason)
+	}
+	if d.Tier != Tier1 {
+		t.Errorf("decision Tier should still report the intended tier on block, got %s", d.Tier)
+	}
+}
+
+func TestCheckPayload_NoLimitConfigured(t *testing.T) {
+	t.Parallel()
+	// No LimitProvider set → CheckPayload behaves like Check (allow).
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{
+		"grand_total": "1000000000",
+	})
+	if !d.Allowed {
+		t.Error("with no LimitProvider, all-tier-1 should be allowed")
+	}
+}
+
+func TestCheckPayload_FieldAbsentAllows(t *testing.T) {
+	t.Parallel()
+	// If the payload doesn't carry the configured field, the cap can't be
+	// evaluated — fail open. The server-side write endpoints have their
+	// own validation; not the gate's job to second-guess shape.
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(50_000_000)},
+	}})
+	d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{
+		// no grand_total here
+		"customer_id": "cust_x",
+	})
+	if !d.Allowed {
+		t.Errorf("missing field should pass the cap, got %q", d.Reason)
+	}
+}
+
+func TestCheckPayload_NonNumericBlocks(t *testing.T) {
+	t.Parallel()
+	// A malformed value shouldn't silently pass — that'd let an upstream
+	// bug bypass the cap. Mark as policy_blocked so operators notice.
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(50_000_000)},
+	}})
+	d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{
+		"grand_total": []any{"why is this a list"},
+	})
+	if d.Allowed {
+		t.Fatal("malformed value should block")
+	}
+	if !containsSubstr(d.Reason, "value-limit") {
+		t.Errorf("reason should mention the failure mode, got %q", d.Reason)
+	}
+}
+
+func TestCheckPayload_AcceptsMultipleNumericShapes(t *testing.T) {
+	t.Parallel()
+	// JSON parsers can hand us strings, float64, or json.Number depending
+	// on the upstream. The cap check has to accept all three.
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(100)},
+	}})
+	cases := []any{"50", 50.0, int(50), int64(50)}
+	for _, v := range cases {
+		d := g.CheckPayload("sales_invoice", "create_draft", "", map[string]any{"grand_total": v})
+		if !d.Allowed {
+			t.Errorf("expected allow for %T(%v), got %q", v, v, d.Reason)
+		}
+	}
+}
+
+func TestCheckPayload_PerCompanyOverrideWins(t *testing.T) {
+	t.Parallel()
+	// Global says 50M; one specific company is bumped to 200M.
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{
+		global: map[string]ValueLimit{
+			"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+				MaxIDR: decimal.NewFromInt(50_000_000), Label: "global"},
+		},
+		byCo: map[string]map[string]ValueLimit{
+			"cmp_premium": {
+				"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+					MaxIDR: decimal.NewFromInt(200_000_000), Label: "premium"},
+			},
+		},
+	})
+
+	// 75M under premium's 200M cap → allowed for cmp_premium...
+	if d := g.CheckPayload("sales_invoice", "create_draft", "cmp_premium",
+		map[string]any{"grand_total": "75000000"}); !d.Allowed {
+		t.Errorf("premium override should allow 75M, got %q", d.Reason)
+	}
+	// ...blocked for any other company.
+	if d := g.CheckPayload("sales_invoice", "create_draft", "cmp_other",
+		map[string]any{"grand_total": "75000000"}); d.Allowed {
+		t.Error("global cap should block 75M for cmp_other")
+	}
+}
+
+func TestCheckPayload_Tier0Bypass(t *testing.T) {
+	t.Parallel()
+	// Tier-0 reads never carry a relevant amount; the cap should be
+	// short-circuited so list/get tools don't get blocked by a stray
+	// payload field with the right name.
+	g := NewGate(DefaultConfig(), fixtureRegistry())
+	g.SetLimits(&fakeLimits{global: map[string]ValueLimit{
+		"sales_invoice": {Doctype: "sales_invoice", Field: "grand_total",
+			MaxIDR: decimal.NewFromInt(1)},
+	}})
+	d := g.CheckPayload("sales_invoice", "list_with_filters", "", map[string]any{
+		"grand_total": "999999999", // would breach if checked
+	})
+	if !d.Allowed {
+		t.Errorf("Tier 0 should bypass value cap, got %q", d.Reason)
 	}
 }
 

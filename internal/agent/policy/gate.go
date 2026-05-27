@@ -15,6 +15,9 @@ package policy
 import (
 	"errors"
 	"fmt"
+	"strings"
+
+	"github.com/shopspring/decimal"
 
 	"github.com/tandigital/logica-erp/internal/agentcontract"
 )
@@ -69,16 +72,40 @@ type Config struct {
 // DefaultConfig returns the v1 default tier configuration.
 func DefaultConfig() Config { return Config{Tier1Enabled: true, Tier2Enabled: false} }
 
+// ValueLimit caps a Tier-1 draft's numeric field. If the value extracted
+// from the payload exceeds MaxIDR, the tool is rejected with a policy_blocked
+// reason. Field is the JSON key in the create payload (e.g. "grand_total"
+// for sales_invoice, "paid_amount" for payment_entry). Label is shown to
+// the user and in the audit log.
+type ValueLimit struct {
+	Doctype string
+	Field   string
+	MaxIDR  decimal.Decimal
+	Label   string
+}
+
+// LimitProvider fetches active ValueLimits at gate-check time. Pluggable so
+// the gate doesn't need to know about the DB; cmd/agent supplies a
+// DB-backed implementation. A nil provider means "no value caps configured".
+type LimitProvider interface {
+	LimitFor(doctype, companyID string) (ValueLimit, bool)
+}
+
 // Gate evaluates whether the calling agent may invoke `toolName` on the given
 // doctype.  The doctype + tier mapping comes from the contract registry.
 type Gate struct {
 	cfg      Config
 	registry *agentcontract.Registry
+	limits   LimitProvider
 }
 
 func NewGate(cfg Config, reg *agentcontract.Registry) *Gate {
 	return &Gate{cfg: cfg, registry: reg}
 }
+
+// SetLimits wires a LimitProvider; safe to call once at boot. Subsequent
+// CheckPayload calls will consult it for Tier-1 + Tier-2 dispatches.
+func (g *Gate) SetLimits(p LimitProvider) { g.limits = p }
 
 // Check classifies (doctype, toolName) and returns a Decision. The caller is
 // responsible for recording a `policy_blocked` audit entry on Allowed=false.
@@ -107,6 +134,70 @@ func (g *Gate) Check(doctype, toolName string) Decision {
 	}
 	return Decision{Allowed: false, Doctype: doctype,
 		Reason: fmt.Sprintf("tool %q not declared in %s contract", toolName, doctype)}
+}
+
+// CheckPayload is the richer gate used for write tools — it runs the same
+// tier check as Check, and on Tier 1 + Tier 2 dispatches it additionally
+// asserts the payload's caps. Read-only Tier 0 tools never carry a
+// payload-relevant field; CheckPayload delegates to Check for them.
+//
+// companyID is the acting user's active company (X-Company-Id header) so
+// per-company overrides win over the global default.
+//
+// payload is the raw map the tool will POST. For composed tools the
+// orchestrator passes the SOURCE doc fields (e.g. the SI being settled by
+// a payment) since the relevant amount lives there.
+func (g *Gate) CheckPayload(doctype, toolName, companyID string, payload map[string]any) Decision {
+	d := g.Check(doctype, toolName)
+	if !d.Allowed || d.Tier == Tier0 || g.limits == nil {
+		return d
+	}
+	lim, ok := g.limits.LimitFor(doctype, companyID)
+	if !ok {
+		return d
+	}
+	raw, has := payload[lim.Field]
+	if !has {
+		return d
+	}
+	v, err := toDecimal(raw)
+	if err != nil {
+		// Malformed value — don't reject silently. Mark as blocked so the
+		// operator notices the upstream bug.
+		return Decision{Allowed: false, Tier: d.Tier, Doctype: doctype,
+			Reason: fmt.Sprintf("value-limit check: field %q is not numeric (%v)", lim.Field, err)}
+	}
+	if v.GreaterThan(lim.MaxIDR) {
+		label := lim.Label
+		if label == "" {
+			label = fmt.Sprintf("the configured Rp %s limit", lim.MaxIDR.StringFixed(0))
+		}
+		return Decision{Allowed: false, Tier: d.Tier, Doctype: doctype,
+			Reason: fmt.Sprintf("%s value %s exceeds %s", lim.Field, v.StringFixed(0), label)}
+	}
+	return d
+}
+
+// toDecimal accepts the loosely-typed JSON shapes a payload can carry:
+// a string, a json.Number (rendered to string), or a float64. Returns an
+// error for anything else so a typo in field name doesn't silently bypass
+// the cap.
+func toDecimal(v any) (decimal.Decimal, error) {
+	switch x := v.(type) {
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return decimal.Zero, nil
+		}
+		return decimal.NewFromString(s)
+	case float64:
+		return decimal.NewFromFloat(x), nil
+	case int:
+		return decimal.NewFromInt(int64(x)), nil
+	case int64:
+		return decimal.NewFromInt(x), nil
+	}
+	return decimal.Zero, fmt.Errorf("unsupported numeric type %T", v)
 }
 
 func (g *Gate) findDocSpec(doctype string) *agentcontract.DocumentSpec {

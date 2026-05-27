@@ -78,6 +78,10 @@ func main() {
 	logger.Info("agent: contracts loaded", "summary", registry.Summary())
 
 	gate := policy.NewGate(policy.DefaultConfig(), registry)
+	// Value-cap store: caches active rows from agent_policy_value_limit;
+	// gate consults it on every Tier-1 dispatch via CheckPayload.
+	policyLimits := policy.NewLimitsStore(db)
+	gate.SetLimits(policyLimits)
 	rec := audit.New(db)
 	auditQuery := audit.NewQuery(db)
 	costSvc := audit.NewCostService(db)
@@ -129,6 +133,7 @@ func main() {
 		registerNudges(hapi, nudgeEval)
 		audit.RegisterAdmin(hapi, auditQuery)
 		audit.RegisterCosts(hapi, costSvc)
+		policy.RegisterAdmin(hapi, policyLimits)
 
 		// SSE streaming chat. Goes through the same Auth middleware (the
 		// chi router scope above), but bypasses huma — huma's openapi
@@ -449,9 +454,19 @@ func runOneToolCall(ctx context.Context, reg *tools.Registry, gate *policy.Gate,
 		doctype, _ = argsObj["doctype"].(string)
 	}
 	if doctype != "" {
-		// Resolve tool tier via gate. The gate's per-doctype tier list lives
-		// in AGENT_CONTRACT.md.
-		dec := gate.Check(doctype, mapToolForGate(t.Name))
+		// Tier check + payload value-cap (Tier-1+ only). For create_draft
+		// the relevant numbers live in args["payload"]; composed tools
+		// don't expose them, so the cap naturally no-ops there. Operators
+		// who want to cap composed tools can add the source-doctype limit
+		// (e.g. cap sales_invoice grand_total → also caps a
+		// credit-note-from-invoice on that SI).
+		var payload map[string]any
+		if p, ok := argsObj["payload"].(map[string]any); ok {
+			payload = p
+		} else {
+			payload = argsObj
+		}
+		dec := gate.CheckPayload(doctype, mapToolForGate(t.Name), erpcc.CompanyID, payload)
 		if !dec.Allowed {
 			ev := base
 			ev.Type = audit.EventPolicyBlocked
