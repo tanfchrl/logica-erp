@@ -6,6 +6,7 @@ import { Card, CardDescription, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { StatusPill } from '@/components/StatusPill';
 import { Skeleton } from '@/components/EmptyState';
+import { Timeline } from '@/components/Timeline';
 import { api } from '@/lib/api';
 import { money, date } from '@/lib/format';
 import { cn } from '@/lib/cn';
@@ -90,8 +91,13 @@ export function DetailView({ config, schema }: DetailViewProps) {
             {data && renderChildTables(data)}
           </div>
 
-          {/* Right rail: meta + raw payload viewer */}
-          {data && <MetaRail record={data} />}
+          {/* Right rail: meta + raw payload viewer + activity timeline */}
+          {data && (
+            <div className="space-y-4">
+              <MetaRail record={data} />
+              {id && <Timeline doctype={config.doctype} documentId={id} />}
+            </div>
+          )}
         </div>
       </div>
     </>

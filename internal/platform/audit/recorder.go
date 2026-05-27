@@ -28,15 +28,16 @@ type Diff struct {
 	After  any `json:"after,omitempty"`
 }
 
-// Record inserts a document_audit row using the given pgx.Tx.
+// Record inserts a doc_event row using the given pgx.Tx. The partition for the
+// current month is picked automatically by Postgres declarative partitioning.
 func Record(ctx context.Context, tx pgx.Tx, doctype, documentID, userID string, action Action, diff Diff) error {
 	payload, err := json.Marshal(diff)
 	if err != nil {
 		return err
 	}
 	_, err = tx.Exec(ctx, `
-		INSERT INTO document_audit (id, doctype, document_id, action, changed_by, diff)
+		INSERT INTO doc_event (id, doctype, document_id, action, changed_by, diff)
 		VALUES ($1,$2,$3,$4,$5,$6)`,
-		dbx.NewIDWithPrefix("aud"), doctype, documentID, string(action), userID, payload)
+		dbx.NewIDWithPrefix("evt"), doctype, documentID, string(action), userID, payload)
 	return err
 }

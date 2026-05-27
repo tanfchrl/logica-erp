@@ -14,6 +14,7 @@ import { Combobox } from '@/components/Combobox';
 import { NumericInput } from '@/components/NumericInput';
 import { DocstatusPill, StatusPill } from '@/components/StatusPill';
 import { ApprovalWidget } from '@/components/ApprovalWidget';
+import { Timeline } from '@/components/Timeline';
 import { Kbd } from '@/components/Kbd';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
@@ -467,6 +468,10 @@ export function SalesInvoiceForm() {
               <li className="flex gap-2"><Ban   className="size-3.5 shrink-0 mt-0.5 text-text-tertiary" /> Cancel posts reversing entries; can't cancel if any payment is applied.</li>
             </ul>
           </Card>
+
+          {!isNew && existing && (
+            <Timeline doctype="sales_invoice" documentId={existing.id} />
+          )}
         </aside>
       </motion.div>
     </>

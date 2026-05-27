@@ -14,6 +14,7 @@ import { Combobox } from '@/components/Combobox';
 import { NumericInput } from '@/components/NumericInput';
 import { DocstatusPill } from '@/components/StatusPill';
 import { ApprovalWidget } from '@/components/ApprovalWidget';
+import { Timeline } from '@/components/Timeline';
 import { Kbd } from '@/components/Kbd';
 import { api, apiBlob } from '@/lib/api';
 import { money } from '@/lib/format';
@@ -499,6 +500,7 @@ export function PurchaseInvoiceForm() {
             </div>
           </Card>
 
+          {existing && <Timeline doctype="purchase_invoice" documentId={existing.id} />}
         </div>
       </motion.div>
     </>

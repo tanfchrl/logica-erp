@@ -14,6 +14,7 @@ import { Combobox } from '@/components/Combobox';
 import { NumericInput } from '@/components/NumericInput';
 import { DocstatusPill, StatusPill } from '@/components/StatusPill';
 import { ApprovalWidget } from '@/components/ApprovalWidget';
+import { Timeline } from '@/components/Timeline';
 import { api } from '@/lib/api';
 import { money } from '@/lib/format';
 import { toast } from '@/components/Toaster';
@@ -301,6 +302,10 @@ export function JournalEntryForm() {
               <li>Cancel posts inverse entries — both visible in reports, net to zero.</li>
             </ul>
           </Card>
+
+          {!isNew && existing && (
+            <Timeline doctype="journal_entry" documentId={existing.id} />
+          )}
         </aside>
       </motion.div>
     </>

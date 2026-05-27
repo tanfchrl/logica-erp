@@ -50,16 +50,16 @@ func (s *QueryService) Query(ctx context.Context, p QueryParams) ([]Entry, error
 	q := `
 		SELECT a.id, a.doctype, a.document_id, a.action, a.changed_by,
 		       coalesce(u.email,''), coalesce(u.full_name,''),
-		       a.changed_at, a.diff
-		FROM document_audit a
+		       a.occurred_at, a.diff
+		FROM doc_event a
 		LEFT JOIN users u ON u.id = a.changed_by
 		WHERE ($1 = '' OR a.doctype = $1)
 		  AND ($2 = '' OR a.document_id = $2)
 		  AND ($3 = '' OR a.changed_by = $3)
 		  AND ($4 = '' OR a.action = $4)
-		  AND ($5::timestamptz IS NULL OR a.changed_at >= $5)
-		  AND ($6::timestamptz IS NULL OR a.changed_at <  $6)
-		ORDER BY a.changed_at DESC
+		  AND ($5::timestamptz IS NULL OR a.occurred_at >= $5)
+		  AND ($6::timestamptz IS NULL OR a.occurred_at <  $6)
+		ORDER BY a.occurred_at DESC
 		LIMIT $7`
 	var since, until any
 	if !p.Since.IsZero() {
@@ -94,7 +94,7 @@ func (s *QueryService) Distinct(ctx context.Context, c string) ([]string, error)
 	default:
 		return nil, huma.NewError(http.StatusBadRequest, "unsupported column")
 	}
-	rows, err := s.db.Query(ctx, "SELECT DISTINCT "+c+" FROM document_audit WHERE "+c+" <> '' ORDER BY "+c)
+	rows, err := s.db.Query(ctx, "SELECT DISTINCT "+c+" FROM doc_event WHERE "+c+" <> '' ORDER BY "+c)
 	if err != nil {
 		return nil, err
 	}

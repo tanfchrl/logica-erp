@@ -113,6 +113,8 @@ func main() {
 	namingAdminSvc := naming.NewAdminService(db)
 	emailSvc := email.NewService(db)
 	auditQuerySvc := audit.NewQueryService(db)
+	auditViewRec  := audit.NewViewRecorder(db)
+	timelineSvc   := audit.NewTimelineService(db)
 	fySvc := fiscalyear.NewService(db)
 	identitySvc := identity.NewService(db)
 	printRenderer := platformprint.NewGotenbergRenderer(cfg.GotenbergURL)
@@ -126,6 +128,8 @@ func main() {
 	notifier := notifrules.NewDispatcher(db, emailSvc)
 	// Background worker drains notification_dispatch with exponential backoff.
 	go notifier.RunWorker(ctx, 10*time.Second)
+	// Partition manager keeps doc_event (monthly) + doc_view (daily) aligned.
+	go audit.NewPartitionManager(db).Run(ctx)
 	sysHealthSvc := sysinsights.NewService(db)
 	payrollSetSvc := payrollconfig.NewService(db)
 	approvalEng := workflow.NewApprovalEngine(db)
@@ -190,6 +194,7 @@ func main() {
 
 	r.Route("/api/v1", func(api chi.Router) {
 		api.Use(httpx.Auth(db, signer, publicPrefixes))
+		api.Use(audit.RecordViewMiddleware(auditViewRec))
 
 		humaCfg := huma.DefaultConfig("Logica ERP API", "0.1.0")
 		humaCfg.OpenAPIPath = "/openapi"
@@ -240,6 +245,7 @@ func main() {
 		naming.RegisterAdmin(hapi, &naming.AdminHandler{Service: namingAdminSvc, Perm: perm})
 		email.Register(hapi, &email.Handler{Service: emailSvc, Perm: perm})
 		audit.RegisterAdmin(hapi, &audit.AdminHandler{Service: auditQuerySvc, Perm: perm})
+		audit.RegisterTimeline(hapi, &audit.TimelineHandler{Service: timelineSvc, Perm: perm})
 		fiscalyear.Register(hapi, &fiscalyear.Handler{Service: fySvc, Perm: perm})
 		identity.Register(hapi, &identity.Handler{Service: identitySvc, Perm: perm})
 		platformprint.RegisterAdmin(hapi, &platformprint.AdminHandler{Service: printAdminSvc, Perm: perm})
