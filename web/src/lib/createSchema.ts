@@ -263,6 +263,27 @@ export const assetCreate: CreateSchema = {
   },
 };
 
+export const assetMovementCreate: CreateSchema = {
+  notice: 'Movements are auditable handovers between custodians or locations. No GL impact.',
+  fields: [
+    { name: 'asset_id', label: 'Asset', kind: 'link', required: true,
+      linkEndpoint: '/assets/assets', linkLabel: 'asset_name', linkDescription: 'name' },
+    { name: 'movement_date', label: 'Movement date', kind: 'date', required: true },
+    { name: 'movement_type', label: 'Type', kind: 'select', required: true, default: 'transfer',
+      options: [
+        { value: 'issue',    label: 'Issue (first hand-out)' },
+        { value: 'receipt',  label: 'Receipt (back to store)' },
+        { value: 'transfer', label: 'Transfer (custodian/location change)' },
+      ] },
+    { name: 'from_custodian', label: 'From custodian', kind: 'text', hint: 'Optional — leave blank for first issue.' },
+    { name: 'to_custodian',   label: 'To custodian',   kind: 'text', required: true },
+    { name: 'from_location',  label: 'From location',  kind: 'text' },
+    { name: 'to_location',    label: 'To location',    kind: 'text', required: true },
+    { name: 'purpose',        label: 'Purpose',        kind: 'text', span: 2 },
+    { name: 'remarks',        label: 'Remarks',        kind: 'textarea', span: 2 },
+  ],
+};
+
 export const assetCategoryCreate: CreateSchema = {
   notice: 'Categories let you stamp consistent depreciation defaults onto every new asset. Useful life is in months (e.g. 48 = 4 years).',
   fields: [
@@ -347,6 +368,7 @@ export const createSchemas: Record<string, CreateSchema> = {
   '/support/issues':               issueCreate,
   '/assets/assets':                assetCreate,
   '/assets/asset-categories':      assetCategoryCreate,
+  '/assets/asset-movements':       assetMovementCreate,
   '/manufacturing/boms':           bomCreate,
   '/manufacturing/work-orders':    workOrderCreate,
   '/pos/invoices':                 posInvoiceCreate,
