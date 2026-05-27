@@ -46,14 +46,21 @@ type Tool struct {
 	Run func(ctx context.Context, erpcc erpclient.CallContext, args json.RawMessage) (any, error)
 }
 
+// ERPDoer is the slice of erpclient.Client the tool registry actually uses.
+// Defined as an interface so tests can swap in a fake without spinning up
+// an HTTP server. The concrete *erpclient.Client trivially satisfies it.
+type ERPDoer interface {
+	Do(ctx context.Context, cc erpclient.CallContext, method, path string, body any, out any) error
+}
+
 // Registry holds all loaded tools keyed by name.
 type Registry struct {
-	erp      *erpclient.Client
+	erp      ERPDoer
 	registry *agentcontract.Registry
 	tools    map[string]Tool
 }
 
-func New(erp *erpclient.Client, contractReg *agentcontract.Registry) *Registry {
+func New(erp ERPDoer, contractReg *agentcontract.Registry) *Registry {
 	r := &Registry{erp: erp, registry: contractReg, tools: map[string]Tool{}}
 	r.registerBuiltins()
 	return r

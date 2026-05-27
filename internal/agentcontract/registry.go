@@ -56,6 +56,14 @@ func LoadFS(fsys fs.FS, root string) (*Registry, error) {
 	return &Registry{contracts: contracts}, nil
 }
 
+// NewRegistry builds a Registry from an in-memory slice of contracts. Used
+// by tests; production callers prefer LoadFS so the actual AGENT_CONTRACT.md
+// files are the source of truth.
+func NewRegistry(contracts []Contract) *Registry {
+	cp := append([]Contract(nil), contracts...)
+	return &Registry{contracts: cp}
+}
+
 // All returns the loaded contracts. Caller must not mutate.
 func (r *Registry) All() []Contract { return r.contracts }
 
