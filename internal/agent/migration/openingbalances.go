@@ -89,60 +89,9 @@ func (s *Service) ProposeOpeningBalances(ctx context.Context, userID, sessionID 
 		}
 	}
 
-	var totalDebit, totalCredit decimal.Decimal
-	var unmapped []string
-	out := make([]OpeningBalanceLine, 0, len(lines))
-	var inventoryLine *OpeningBalanceLine
-	var inventoryAcct map[string]any
-
-	for _, l := range lines {
-		l.AccountNumber = strings.TrimSpace(l.AccountNumber)
-		d, err := decimal.NewFromString(emptyAsZero(l.Debit))
-		if err != nil {
-			return nil, fmt.Errorf("account %s debit: %w", l.AccountNumber, err)
-		}
-		c, err := decimal.NewFromString(emptyAsZero(l.Credit))
-		if err != nil {
-			return nil, fmt.Errorf("account %s credit: %w", l.AccountNumber, err)
-		}
-		if d.Sign() < 0 || c.Sign() < 0 {
-			return nil, fmt.Errorf("account %s: debit and credit must be non-negative", l.AccountNumber)
-		}
-		if !d.IsZero() && !c.IsZero() {
-			return nil, fmt.Errorf("account %s: cannot have both a debit and a credit on the same opening line", l.AccountNumber)
-		}
-		l.Debit = d.String()
-		l.Credit = c.String()
-		totalDebit = totalDebit.Add(d)
-		totalCredit = totalCredit.Add(c)
-
-		acct, ok := byNumber[l.AccountNumber]
-		if !ok {
-			unmapped = append(unmapped, l.AccountNumber)
-		} else {
-			l.ResolvedAccountID, _ = acct["id"].(string)
-			l.ResolvedAccountName, _ = acct["name"].(string)
-			l.AccountType, _ = acct["account_type"].(string)
-			if l.AccountType == "stock" {
-				lc := l
-				inventoryLine = &lc
-				inventoryAcct = acct
-			}
-		}
-		out = append(out, l)
-	}
-
-	prop := &OpeningBalanceProposal{
-		Lines:            out,
-		TotalDebit:       totalDebit.String(),
-		TotalCredit:      totalCredit.String(),
-		Balanced:         totalDebit.Equal(totalCredit),
-		UnmappedAccounts: unmapped,
-		PostingDate:      defaultPostingDate(postingDate),
-	}
-	if !prop.Balanced {
-		diff := totalDebit.Sub(totalCredit).Abs()
-		prop.Imbalance = diff.String()
+	prop, inventoryLine, inventoryAcct, err := buildProposal(lines, byNumber, postingDate)
+	if err != nil {
+		return nil, err
 	}
 
 	// Stock reconciliation: only when both an Inventory line exists in the
@@ -306,6 +255,79 @@ func defaultPostingDate(in string) string {
 	}
 	// Same default the wizard uses for everything else — today, ISO date.
 	return "" // empty signals "let the API default to today"
+}
+
+// buildProposal is the pure-validation core of ProposeOpeningBalances —
+// no DB, no HTTP, no auth. Takes the user-supplied trial-balance lines
+// and the COA lookup (account_number → row), returns the structured
+// proposal plus the Inventory line + account (when an account_type=stock
+// row matched) so the caller can layer the stock reconciliation on top.
+//
+// Surfaced as a standalone function so the reconciliation logic is
+// unit-testable without spinning up a database. Mirrors spec §4 Step 4:
+// debit + credit must be non-negative; never both on one line; account
+// numbers must be in the COA; total debits must equal total credits.
+func buildProposal(
+	lines []OpeningBalanceLine,
+	byNumber map[string]map[string]any,
+	postingDate string,
+) (*OpeningBalanceProposal, *OpeningBalanceLine, map[string]any, error) {
+	var totalDebit, totalCredit decimal.Decimal
+	var unmapped []string
+	out := make([]OpeningBalanceLine, 0, len(lines))
+	var inventoryLine *OpeningBalanceLine
+	var inventoryAcct map[string]any
+
+	for _, l := range lines {
+		l.AccountNumber = strings.TrimSpace(l.AccountNumber)
+		d, err := decimal.NewFromString(emptyAsZero(l.Debit))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("account %s debit: %w", l.AccountNumber, err)
+		}
+		c, err := decimal.NewFromString(emptyAsZero(l.Credit))
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("account %s credit: %w", l.AccountNumber, err)
+		}
+		if d.Sign() < 0 || c.Sign() < 0 {
+			return nil, nil, nil, fmt.Errorf("account %s: debit and credit must be non-negative", l.AccountNumber)
+		}
+		if !d.IsZero() && !c.IsZero() {
+			return nil, nil, nil, fmt.Errorf("account %s: cannot have both a debit and a credit on the same opening line", l.AccountNumber)
+		}
+		l.Debit = d.String()
+		l.Credit = c.String()
+		totalDebit = totalDebit.Add(d)
+		totalCredit = totalCredit.Add(c)
+
+		acct, ok := byNumber[l.AccountNumber]
+		if !ok {
+			unmapped = append(unmapped, l.AccountNumber)
+		} else {
+			l.ResolvedAccountID, _ = acct["id"].(string)
+			l.ResolvedAccountName, _ = acct["name"].(string)
+			l.AccountType, _ = acct["account_type"].(string)
+			if l.AccountType == "stock" {
+				lc := l
+				inventoryLine = &lc
+				inventoryAcct = acct
+			}
+		}
+		out = append(out, l)
+	}
+
+	prop := &OpeningBalanceProposal{
+		Lines:            out,
+		TotalDebit:       totalDebit.String(),
+		TotalCredit:      totalCredit.String(),
+		Balanced:         totalDebit.Equal(totalCredit),
+		UnmappedAccounts: unmapped,
+		PostingDate:      defaultPostingDate(postingDate),
+	}
+	if !prop.Balanced {
+		diff := totalDebit.Sub(totalCredit).Abs()
+		prop.Imbalance = diff.String()
+	}
+	return prop, inventoryLine, inventoryAcct, nil
 }
 
 // decodeProposal round-trips a stored proposal blob (from agent_session.state)

@@ -5,6 +5,18 @@
 {$LOGICA_DOMAIN} {
     encode gzip zstd
 
+    # Agent service. Must come BEFORE the @api block so /api/agent/* doesn't
+    # match the broader /api/* matcher and get routed to the ERP core.
+    # The streaming chat endpoint needs flush_interval=-1 and no encoding
+    # so SSE flushes per-chunk instead of buffering.
+    @agentStream path /api/agent/v1/chat/stream
+    reverse_proxy @agentStream agent:8090 {
+        flush_interval -1
+        header_up Accept-Encoding identity
+    }
+    @agent path /api/agent/*
+    reverse_proxy @agent agent:8090
+
     @api path /api/* /healthz /readyz /metrics
     reverse_proxy @api api:8080
 
