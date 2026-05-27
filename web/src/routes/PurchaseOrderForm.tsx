@@ -4,7 +4,7 @@ import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import Decimal from 'decimal.js';
 import {
   Plus, Trash2, Send, Save, Ban, ArrowLeft, AlertCircle, Printer,
-  Pause, Play, CircleStop, Lock, ChevronRight,
+  Pause, Play, CircleStop, Lock, ChevronRight, Package,
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { PageHeader } from '@/components/PageHeader';
@@ -154,6 +154,10 @@ export function PurchaseOrderForm() {
   const status    = existing?.status ?? 'Draft';
 
   // Hold/Close/Stop only make sense in active submitted states.
+  // GRN action only shows when there's something still left to receive.
+  const canRaiseGRN = submitted && existing != null
+    && (status === 'To Receive and Bill' || status === 'To Receive')
+    && existing.items.some((l) => Number(l.received_qty) < Number(l.qty));
   const canHold   = submitted && (status === 'To Receive and Bill' || status === 'To Receive' || status === 'To Bill');
   const canClose  = submitted && status !== 'Closed'  && status !== 'Completed' && status !== 'Cancelled';
   const canStop   = submitted && status !== 'Stopped' && status !== 'Completed' && status !== 'Cancelled';
@@ -289,6 +293,13 @@ export function PurchaseOrderForm() {
             </Button>
             {!isNew && submitted && (
               <Button variant="secondary" onClick={onPrint}><Printer className="size-4" /> Print PDF</Button>
+            )}
+            {canRaiseGRN && (
+              <Button asChild>
+                <Link to={'/stock/purchase-receipts/new' as never} search={{ po: existing!.id } as never}>
+                  <Package className="size-4" /> Receive
+                </Link>
+              </Button>
             )}
             {editable && isNew && (
               <Button onClick={onSaveDraft} loading={createMutation.isPending}>

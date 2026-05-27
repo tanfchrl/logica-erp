@@ -9,6 +9,12 @@ documents:
     tier0_tools: [list_with_filters, get_by_id]
     tier1_tools: [create_draft]
     tier2_tools: []
+  - name: purchase_receipt
+    display_name: "Purchase Receipt / GRN"
+    api_path: "/stock/purchase-receipts"
+    tier0_tools: [list_with_filters, get_by_id]
+    tier1_tools: [create_draft]
+    tier2_tools: []
 system_context: |
   The Stock module models physical inventory locations and (in later
   phases) stock movements posting to the Stock Ledger. In v1 the agent

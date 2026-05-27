@@ -186,6 +186,34 @@ function POStatusPill({ value }: { value: string }) {
   }
 }
 
+function GRNStatusPill({ value }: { value: string }) {
+  switch (value) {
+    case 'Draft':         return <StatusPill tone="neutral" withDot={false}>Draft</StatusPill>;
+    case 'To Bill':       return <StatusPill tone="warning" withDot={false}>To Bill</StatusPill>;
+    case 'Completed':     return <StatusPill tone="success" withDot={false}>Completed</StatusPill>;
+    case 'Return Issued': return <StatusPill tone="info"    withDot={false}>Return Issued</StatusPill>;
+    case 'Cancelled':     return <StatusPill tone="danger"  withDot={false}>Cancelled</StatusPill>;
+    default:              return <StatusPill tone="neutral" withDot={false}>{value || '—'}</StatusPill>;
+  }
+}
+
+const purchaseReceipts: DoctypeConfig = {
+  slug: 'purchase-receipts', modulePath: '/stock', module: 'Stock',
+  doctype: 'purchase_receipt', title: 'Purchase Receipts (GRN)', singular: 'Purchase Receipt', icon: Package,
+  endpoint: '/stock/purchase-receipts',
+  columns: [
+    codeCol('name', 'No.'),
+    dateCol('posting_date', 'Received'),
+    partyCol('supplier_id', 'Supplier'),
+    { accessorKey: 'against_purchase_order_id', header: 'PO', cell: (i) => {
+        const v = i.getValue<string>();
+        return v ? <span className="font-mono text-caption text-text-secondary">{v.slice(-8)}</span> : <span className="text-text-tertiary">—</span>;
+    } },
+    moneyCol('total_value', 'Value'),
+    { accessorKey: 'status', header: 'Status', cell: (i) => <GRNStatusPill value={i.getValue<string>()} /> },
+  ],
+};
+
 function MRStatusPill({ value }: { value: string }) {
   switch (value) {
     case 'Draft':              return <StatusPill tone="neutral" withDot={false}>Draft</StatusPill>;
@@ -421,7 +449,7 @@ const issues: DoctypeConfig = {
 
 export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
-  salesInvoices, materialRequests, purchaseOrders, purchaseInvoices, paymentEntries, journalEntries,
+  salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
   employees, leads, projects, boms, workOrders, assets, issues,
 };
@@ -436,12 +464,12 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   {
     path: '/stock', name: 'Stock', icon: Warehouse,
     description: 'Items, warehouses, and stock movements.',
-    doctypes: [warehouses, items],
+    doctypes: [warehouses, purchaseReceipts, items],
   },
   {
     path: '/buying', name: 'Procurement', icon: ShoppingBag,
     description: 'Material requests, purchase orders, receipts, and bills.',
-    doctypes: [materialRequests, purchaseOrders, purchaseInvoices, suppliers, items],
+    doctypes: [materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, suppliers, items],
   },
   {
     path: '/selling', name: 'Sales', icon: BarChart3,
