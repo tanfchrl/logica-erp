@@ -29,6 +29,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/buyingsettings"
 	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
 	"github.com/tandigital/logica-erp/internal/assets/assetcategory"
+	"github.com/tandigital/logica-erp/internal/assets/assetlocation"
 	"github.com/tandigital/logica-erp/internal/assets/assetmovement"
 	"github.com/tandigital/logica-erp/internal/assets/assetreports"
 	"github.com/tandigital/logica-erp/internal/assets/assetsettings"
@@ -122,6 +123,7 @@ func main() {
 	assetSvc := asset.NewService(db)
 	assetCategorySvc := assetcategory.NewService(db)
 	assetMovementSvc := assetmovement.NewService(db)
+	assetLocationSvc := assetlocation.NewService(db)
 	financeBookSvc := financebook.NewService(db)
 	assetVASvc := assetvalueadjustment.NewService(db)
 	assetSettingsSvc := assetsettings.NewService(db)
@@ -275,6 +277,7 @@ func main() {
 		asset.Register(hapi, &asset.Handler{Service: assetSvc, Perm: perm})
 		assetcategory.Register(hapi, &assetcategory.Handler{Service: assetCategorySvc, Perm: perm})
 		assetmovement.Register(hapi, &assetmovement.Handler{Service: assetMovementSvc, Perm: perm})
+		assetlocation.Register(hapi, &assetlocation.Handler{Service: assetLocationSvc, Perm: perm})
 		financebook.Register(hapi, &financebook.Handler{Service: financeBookSvc, Perm: perm})
 		assetvalueadjustment.Register(hapi, &assetvalueadjustment.Handler{Service: assetVASvc, Perm: perm})
 		assetsettings.Register(hapi, &assetsettings.Handler{Service: assetSettingsSvc, Perm: perm})

@@ -342,6 +342,7 @@ var phase0Doctypes = []string{
 	"material_request", "purchase_receipt", "buying_settings",
 	// Assets v1 (post-launch additions)
 	"asset_category", "asset_movement", "asset_value_adjustment",
+	"asset_location",
 	"finance_book", "asset_settings",
 	// Phase 3
 	"lead", "project", "task", "timesheet",

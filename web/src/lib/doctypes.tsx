@@ -409,6 +409,21 @@ const workOrders: DoctypeConfig = {
   hasNew: false,
 };
 
+const assetLocations: DoctypeConfig = {
+  slug: 'asset-locations', modulePath: '/assets', module: 'Asset & Inventory',
+  doctype: 'asset_location', title: 'Asset Locations', singular: 'Asset Location', icon: Building2,
+  endpoint: '/assets/asset-locations',
+  columns: [
+    nameCol('name', 'Location', Building2),
+    { accessorKey: 'parent_id', header: 'Parent', cell: (i) => {
+        const v = i.getValue<string>();
+        return v ? <span className="font-mono text-caption text-text-secondary">{v.slice(-8)}</span> : <span className="text-text-tertiary">—</span>;
+    } },
+    { accessorKey: 'is_group', header: 'Group?', cell: (i) => i.getValue<boolean>() ? <StatusPill tone="info" withDot={false}>Group</StatusPill> : <span className="text-text-tertiary">—</span> },
+    { accessorKey: 'address', header: 'Address', cell: (i) => <span className="text-text-secondary truncate">{i.getValue<string>() || '—'}</span> },
+  ],
+};
+
 const assetMovements: DoctypeConfig = {
   slug: 'asset-movements', modulePath: '/assets', module: 'Asset & Inventory',
   doctype: 'asset_movement', title: 'Asset Movements', singular: 'Asset Movement', icon: ClipboardList,
@@ -479,7 +494,7 @@ export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
   salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
-  employees, leads, projects, boms, workOrders, assets, assetCategories, assetMovements, issues,
+  employees, leads, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
 };
 
 // Pretty-prints the four depreciation method enum values for tables + forms.
@@ -537,8 +552,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/assets', name: 'Asset & Inventory', icon: ClipboardList,
-    description: 'Fixed-asset register, depreciation, movements.',
-    doctypes: [assets, assetCategories, assetMovements],
+    description: 'Fixed-asset register, depreciation, movements, locations.',
+    doctypes: [assets, assetCategories, assetLocations, assetMovements],
   },
   {
     path: '/support', name: 'Helpdesk', icon: Headphones,

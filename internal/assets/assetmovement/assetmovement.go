@@ -49,6 +49,8 @@ type AssetMovement struct {
 	ToCustodian    string             `json:"to_custodian"`
 	FromLocation   string             `json:"from_location,omitempty"`
 	ToLocation     string             `json:"to_location"`
+	FromLocationID string             `json:"from_location_id,omitempty"`
+	ToLocationID   string             `json:"to_location_id,omitempty"`
 	Purpose        string             `json:"purpose,omitempty"`
 	Remarks        string             `json:"remarks,omitempty"`
 	Docstatus      submittable.Status `json:"docstatus"`
@@ -59,17 +61,19 @@ type AssetMovement struct {
 }
 
 type MovementCreateInput struct {
-	CompanyID     string         `json:"company_id,omitempty"`
-	AssetID       string         `json:"asset_id"`
-	MovementDate  string         `json:"movement_date"`
-	MovementType  string         `json:"movement_type" doc:"issue | receipt | transfer"`
-	FromCustodian string         `json:"from_custodian,omitempty"`
-	ToCustodian   string         `json:"to_custodian"`
-	FromLocation  string         `json:"from_location,omitempty"`
-	ToLocation    string         `json:"to_location"`
-	Purpose       string         `json:"purpose,omitempty"`
-	Remarks       string         `json:"remarks,omitempty"`
-	CustomFields  map[string]any `json:"custom_fields,omitempty"`
+	CompanyID      string         `json:"company_id,omitempty"`
+	AssetID        string         `json:"asset_id"`
+	MovementDate   string         `json:"movement_date"`
+	MovementType   string         `json:"movement_type" doc:"issue | receipt | transfer"`
+	FromCustodian  string         `json:"from_custodian,omitempty"`
+	ToCustodian    string         `json:"to_custodian"`
+	FromLocation   string         `json:"from_location,omitempty"   doc:"free-text; ignored when from_location_id is set"`
+	ToLocation     string         `json:"to_location,omitempty"     doc:"free-text; ignored when to_location_id is set"`
+	FromLocationID string         `json:"from_location_id,omitempty" doc:"FK to asset_location"`
+	ToLocationID   string         `json:"to_location_id,omitempty"   doc:"FK to asset_location (preferred over to_location)"`
+	Purpose        string         `json:"purpose,omitempty"`
+	Remarks        string         `json:"remarks,omitempty"`
+	CustomFields   map[string]any `json:"custom_fields,omitempty"`
 }
 
 type Service struct{ db *dbx.DB }
@@ -95,8 +99,9 @@ func (s *Service) CreateDraft(ctx context.Context, in MovementCreateInput) (*Ass
 	if in.ToCustodian = strings.TrimSpace(in.ToCustodian); in.ToCustodian == "" {
 		return nil, errors.New("asset_movement.to_custodian: required")
 	}
-	if in.ToLocation = strings.TrimSpace(in.ToLocation); in.ToLocation == "" {
-		return nil, errors.New("asset_movement.to_location: required")
+	in.ToLocation = strings.TrimSpace(in.ToLocation)
+	if in.ToLocation == "" && in.ToLocationID == "" {
+		return nil, errors.New("asset_movement: to_location_id or to_location is required")
 	}
 	switch in.MovementType {
 	case TypeIssue, TypeReceipt, TypeTransfer:
@@ -130,6 +135,41 @@ func (s *Service) CreateDraft(ctx context.Context, in MovementCreateInput) (*Ass
 			return fmt.Errorf("asset_movement: cannot move a %s asset", assetStatus)
 		}
 
+		// Resolve location FKs → mirror name into the legacy text column.
+		// Either form works; FK wins when both are supplied.
+		if in.ToLocationID != "" {
+			var lname, lco string
+			var deleted bool
+			if err := tx.QueryRow(ctx,
+				`SELECT name, company_id, is_deleted FROM asset_location WHERE id = $1`,
+				in.ToLocationID).Scan(&lname, &lco, &deleted); err != nil {
+				return fmt.Errorf("to_location_id: %w", err)
+			}
+			if deleted {
+				return errors.New("to_location_id: location is deleted")
+			}
+			if lco != in.CompanyID {
+				return errors.New("to_location_id: must be in the same company as the asset")
+			}
+			in.ToLocation = lname
+		}
+		if in.FromLocationID != "" {
+			var lname, lco string
+			var deleted bool
+			if err := tx.QueryRow(ctx,
+				`SELECT name, company_id, is_deleted FROM asset_location WHERE id = $1`,
+				in.FromLocationID).Scan(&lname, &lco, &deleted); err != nil {
+				return fmt.Errorf("from_location_id: %w", err)
+			}
+			if deleted {
+				return errors.New("from_location_id: location is deleted")
+			}
+			if lco != in.CompanyID {
+				return errors.New("from_location_id: must be in the same company as the asset")
+			}
+			in.FromLocation = lname
+		}
+
 		seriesID, pattern, err := pickSeries(ctx, tx, Doctype, in.CompanyID)
 		if err != nil {
 			return err
@@ -146,11 +186,13 @@ func (s *Service) CreateDraft(ctx context.Context, in MovementCreateInput) (*Ass
 			INSERT INTO asset_movement (
 				id, name, company_id, asset_id, movement_date, movement_type,
 				from_custodian, to_custodian, from_location, to_location,
+				from_location_id, to_location_id,
 				purpose, remarks, custom_fields, created_by, updated_by
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)`,
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$16)`,
 			id, name, in.CompanyID, in.AssetID, md, in.MovementType,
 			nullable(in.FromCustodian), in.ToCustodian,
 			nullable(in.FromLocation), in.ToLocation,
+			nullable(in.FromLocationID), nullable(in.ToLocationID),
 			in.Purpose, nullable(in.Remarks), cf, p.UserID); err != nil {
 			return err
 		}
@@ -193,8 +235,10 @@ func (s *Service) Submit(ctx context.Context, id string) (*AssetMovement, error)
 			return err
 		}
 		if _, err := tx.Exec(ctx, `
-			UPDATE asset SET current_custodian = $1, current_location = $2, updated_by = $3
-			WHERE id = $4`, mv.ToCustodian, mv.ToLocation, p.UserID, mv.AssetID); err != nil {
+			UPDATE asset SET current_custodian = $1, current_location = $2,
+			       current_location_id = $3, updated_by = $4
+			WHERE id = $5`, mv.ToCustodian, mv.ToLocation,
+			nullable(mv.ToLocationID), p.UserID, mv.AssetID); err != nil {
 			return err
 		}
 		if err := audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionSubmit, audit.Diff{}); err != nil {
@@ -235,15 +279,16 @@ func (s *Service) Cancel(ctx context.Context, id string) (*AssetMovement, error)
 			return err
 		}
 		// Roll the asset back to the most-recent OTHER submitted movement.
-		var prevCustodian, prevLocation *string
+		var prevCustodian, prevLocation, prevLocationID *string
 		_ = tx.QueryRow(ctx, `
-			SELECT to_custodian, to_location FROM asset_movement
+			SELECT to_custodian, to_location, to_location_id FROM asset_movement
 			WHERE asset_id = $1 AND id <> $2 AND docstatus = 1
 			ORDER BY movement_date DESC, created_at DESC LIMIT 1`,
-			mv.AssetID, id).Scan(&prevCustodian, &prevLocation)
+			mv.AssetID, id).Scan(&prevCustodian, &prevLocation, &prevLocationID)
 		if _, err := tx.Exec(ctx, `
-			UPDATE asset SET current_custodian = $1, current_location = $2, updated_by = $3
-			WHERE id = $4`, prevCustodian, prevLocation, p.UserID, mv.AssetID); err != nil {
+			UPDATE asset SET current_custodian = $1, current_location = $2,
+			       current_location_id = $3, updated_by = $4
+			WHERE id = $5`, prevCustodian, prevLocation, prevLocationID, p.UserID, mv.AssetID); err != nil {
 			return err
 		}
 		if err := audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionCancel, audit.Diff{}); err != nil {
@@ -308,14 +353,17 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*AssetMovement, error) {
 		mv                                              AssetMovement
 		submittedAt, cancelledAt                        *time.Time
 		fromCustodian, fromLocation, remarks, purpose   *string
+		fromLocationID, toLocationID                    *string
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT id, name, company_id, asset_id, movement_date, movement_type,
 		       from_custodian, to_custodian, from_location, to_location,
+		       from_location_id, to_location_id,
 		       purpose, remarks, docstatus, submitted_at, cancelled_at, created_at, updated_at
 		FROM asset_movement WHERE id = $1`, id).
 		Scan(&mv.ID, &mv.Name, &mv.CompanyID, &mv.AssetID, &mv.MovementDate, &mv.MovementType,
 			&fromCustodian, &mv.ToCustodian, &fromLocation, &mv.ToLocation,
+			&fromLocationID, &toLocationID,
 			&purpose, &remarks, &mv.Docstatus, &submittedAt, &cancelledAt, &mv.CreatedAt, &mv.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("asset_movement %s not found", id)
@@ -328,6 +376,12 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*AssetMovement, error) {
 	}
 	if fromLocation != nil {
 		mv.FromLocation = *fromLocation
+	}
+	if fromLocationID != nil {
+		mv.FromLocationID = *fromLocationID
+	}
+	if toLocationID != nil {
+		mv.ToLocationID = *toLocationID
 	}
 	if purpose != nil {
 		mv.Purpose = *purpose

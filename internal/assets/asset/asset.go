@@ -61,6 +61,9 @@ type Asset struct {
 	AccumulatedDepreciation            decimal.Decimal    `json:"accumulated_depreciation"`
 	Status                             string             `json:"status"`
 	NextDepreciationDate               *time.Time         `json:"next_depreciation_date,omitempty"`
+	CurrentCustodian                   string             `json:"current_custodian,omitempty"`
+	CurrentLocation                    string             `json:"current_location,omitempty"`
+	CurrentLocationID                  string             `json:"current_location_id,omitempty"`
 	Docstatus                          submittable.Status `json:"docstatus"`
 	CreatedAt                          time.Time          `json:"created_at"`
 	UpdatedAt                          time.Time          `json:"updated_at"`
@@ -692,18 +695,25 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*Asset, error) {
 		nextDate        *time.Time
 		rateOpt         *decimal.Decimal
 	)
+	var (
+		curCustodian, curLocation, curLocationID *string
+	)
 	err := tx.QueryRow(ctx, `
 		SELECT id, name, company_id, asset_name, asset_category_id, purchase_date,
 		       gross_purchase_amount, expected_value_after_useful_life, useful_life_months, depreciation_method,
 		       depreciation_rate_pct, pro_rata_basis,
 		       asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, cost_center_id,
-		       accumulated_depreciation, status, next_depreciation_date, docstatus, created_at, updated_at
+		       accumulated_depreciation, status, next_depreciation_date,
+		       current_custodian, current_location, current_location_id,
+		       docstatus, created_at, updated_at
 		FROM asset WHERE id = $1`, id).
 		Scan(&a.ID, &a.Name, &a.CompanyID, &a.AssetName, &assetCategoryID, &a.PurchaseDate,
 			&a.GrossPurchaseAmount, &a.ExpectedValueAfterUsefulLife, &a.UsefulLifeMonths, &a.DepreciationMethod,
 			&rateOpt, &a.ProRataBasis,
 			&a.AssetAccountID, &a.AccumulatedDepreciationAccountID, &a.DepreciationExpenseAccountID, &costCenterID,
-			&a.AccumulatedDepreciation, &a.Status, &nextDate, &a.Docstatus, &a.CreatedAt, &a.UpdatedAt)
+			&a.AccumulatedDepreciation, &a.Status, &nextDate,
+			&curCustodian, &curLocation, &curLocationID,
+			&a.Docstatus, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("asset %s not found", id)
 	}
@@ -718,6 +728,15 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*Asset, error) {
 	}
 	if rateOpt != nil {
 		a.DepreciationRatePct = *rateOpt
+	}
+	if curCustodian != nil {
+		a.CurrentCustodian = *curCustodian
+	}
+	if curLocation != nil {
+		a.CurrentLocation = *curLocation
+	}
+	if curLocationID != nil {
+		a.CurrentLocationID = *curLocationID
 	}
 	a.NextDepreciationDate = nextDate
 
