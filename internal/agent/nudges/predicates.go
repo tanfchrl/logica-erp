@@ -63,6 +63,35 @@ func init() {
 	register(Predicate{ID: "aged_drafts_unsubmitted", Run: agedDraftsUnsubmitted})
 	register(Predicate{ID: "stale_leads_no_followup", Run: staleLeadsNoFollowup})
 	register(Predicate{ID: "po_overdue_receipt", Run: poOverdueReceipt})
+	register(Predicate{ID: "mr_pending_ordering", Run: mrPendingOrdering})
+}
+
+// mrPendingOrdering: submitted MRs with purpose=purchase whose status is
+// still Pending or Partially Ordered. Args: count.
+func mrPendingOrdering(ctx context.Context, cc erpclient.CallContext) (Match, error) {
+	items, err := listItems(ctx, cc, "/accounting/material-requests")
+	if err != nil {
+		return Match{}, err
+	}
+	var count int
+	for _, it := range items {
+		ds, _ := it["docstatus"].(float64)
+		if int(ds) != 1 {
+			continue
+		}
+		purpose, _ := it["purpose"].(string)
+		if purpose != "purchase" {
+			continue
+		}
+		status, _ := it["status"].(string)
+		if status == "Pending" || status == "Partially Ordered" {
+			count++
+		}
+	}
+	if count == 0 {
+		return Match{}, nil
+	}
+	return Match{Matches: true, Args: map[string]any{"count": count}}, nil
 }
 
 // poOverdueReceipt: submitted POs whose required_by_date < today AND status

@@ -26,6 +26,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/fiscalyear"
 	"github.com/tandigital/logica-erp/internal/accounting/paymententry"
 	"github.com/tandigital/logica-erp/internal/accounting/periodclosing"
+	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseinvoice"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseorder"
 	"github.com/tandigital/logica-erp/internal/accounting/reports"
@@ -97,6 +98,7 @@ func main() {
 	siSvc := salesinvoice.NewService(db)
 	piSvc := purchaseinvoice.NewService(db)
 	poSvc := purchaseorder.NewService(db)
+	mrSvc := materialrequest.NewService(db, poSvc)
 	peSvc := paymententry.NewService(db)
 	reportSvc := reports.NewService(db)
 	pcvSvc := periodclosing.NewService(db)
@@ -156,6 +158,7 @@ func main() {
 	siSvc.Workflow = workflowEng
 	piSvc.Workflow = workflowEng
 	poSvc.Workflow = workflowEng
+	mrSvc.Workflow = workflowEng
 	peSvc.Workflow = workflowEng
 	jeSvc.Workflow = workflowEng
 	siSvc.Notifier = notifier
@@ -236,6 +239,7 @@ func main() {
 		salesinvoice.Register(hapi, &salesinvoice.Handler{Service: siSvc, Perm: perm, DB: db, PrintRenderer: printRenderer, PrintAdmin: printAdminSvc})
 		purchaseinvoice.Register(hapi, &purchaseinvoice.Handler{Service: piSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
 		purchaseorder.Register(hapi, &purchaseorder.Handler{Service: poSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
+		materialrequest.Register(hapi, &materialrequest.Handler{Service: mrSvc, Perm: perm})
 		paymententry.Register(hapi, &paymententry.Handler{Service: peSvc, Perm: perm})
 		reports.Register(hapi, &reports.Handler{Service: reportSvc, Perm: perm})
 		periodclosing.Register(hapi, &periodclosing.Handler{Service: pcvSvc, Perm: perm})

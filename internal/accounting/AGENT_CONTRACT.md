@@ -51,6 +51,12 @@ documents:
     tier0_tools: [list_with_filters, get_by_id]
     tier1_tools: [create_draft]
     tier2_tools: []
+  - name: material_request
+    display_name: "Material Request"
+    api_path: "/accounting/material-requests"
+    tier0_tools: [list_with_filters, get_by_id]
+    tier1_tools: [create_draft, create_po_from_mr]
+    tier2_tools: []
   - name: journal_entry
     display_name: "Journal Entry"
     api_path: "/accounting/journal-entries"
@@ -106,6 +112,12 @@ nudge_rules:
     cta_label: "Lihat PO"
     cta_prompt: "Tampilkan Purchase Order yang melewati tanggal pengiriman tapi belum diterima."
     priority: high
+  - id: mr_pending_ordering
+    condition: mr_pending_ordering
+    message_template: "{count} Material Request menunggu di-order ke supplier (purpose: purchase)."
+    cta_label: "Lihat MR"
+    cta_prompt: "Tampilkan Material Request yang menunggu PO."
+    priority: normal
 ---
 
 # Modul Akuntansi

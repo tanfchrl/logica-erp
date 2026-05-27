@@ -48,7 +48,7 @@ const sections: { label?: string; items: GuardedNavItem[] }[] = [
     items: [
       { to: '/accounting',     label: 'Finance',            icon: Wallet,         requireAny: ['sales_invoice','purchase_invoice','journal_entry','payment_entry','customer','supplier','item','tax_template','account'] },
       { to: '/stock',          label: 'Stock',              icon: Warehouse,      requireAny: ['warehouse'] },
-      { to: '/buying',         label: 'Procurement',        icon: ShoppingBag,    requireAny: ['purchase_order','purchase_invoice','supplier'] },
+      { to: '/buying',         label: 'Procurement',        icon: ShoppingBag,    requireAny: ['material_request','purchase_order','purchase_invoice','supplier'] },
       { to: '/selling',        label: 'Sales',              icon: BarChart3,      requireAny: ['sales_invoice','customer','lead'] },
       { to: '/manufacturing',  label: 'Production',         icon: Factory,        requireAny: ['bom','work_order'] },
       { to: '/projects',       label: 'Operations',         icon: Briefcase,      requireAny: ['project'] },

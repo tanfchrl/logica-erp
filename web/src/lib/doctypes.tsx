@@ -186,6 +186,41 @@ function POStatusPill({ value }: { value: string }) {
   }
 }
 
+function MRStatusPill({ value }: { value: string }) {
+  switch (value) {
+    case 'Draft':              return <StatusPill tone="neutral" withDot={false}>Draft</StatusPill>;
+    case 'Pending':            return <StatusPill tone="warning" withDot={false}>Pending</StatusPill>;
+    case 'Partially Ordered':  return <StatusPill tone="info"    withDot={false}>Partially</StatusPill>;
+    case 'Ordered':            return <StatusPill tone="info"    withDot={false}>Ordered</StatusPill>;
+    case 'Issued':             return <StatusPill tone="success" withDot={false}>Issued</StatusPill>;
+    case 'Transferred':        return <StatusPill tone="success" withDot={false}>Transferred</StatusPill>;
+    case 'Received':           return <StatusPill tone="success" withDot={false}>Received</StatusPill>;
+    case 'Stopped':            return <StatusPill tone="danger"  withDot={false}>Stopped</StatusPill>;
+    case 'Cancelled':          return <StatusPill tone="danger"  withDot={false}>Cancelled</StatusPill>;
+    default:                   return <StatusPill tone="neutral" withDot={false}>{value || '—'}</StatusPill>;
+  }
+}
+
+const materialRequests: DoctypeConfig = {
+  slug: 'material-requests', modulePath: '/accounting', module: 'Procurement',
+  doctype: 'material_request', title: 'Material Requests', singular: 'Material Request', icon: ClipboardList,
+  endpoint: '/accounting/material-requests',
+  columns: [
+    codeCol('name', 'No.'),
+    dateCol('transaction_date', 'Requested'),
+    dateCol('required_by_date', 'Required by'),
+    { accessorKey: 'purpose', header: 'Purpose', cell: (i) => {
+        const v = i.getValue<string>();
+        const label = v === 'purchase' ? 'Purchase'
+          : v === 'material_transfer' ? 'Transfer'
+          : v === 'material_issue' ? 'Issue'
+          : v === 'manufacture' ? 'Manufacture' : v;
+        return <StatusPill tone="neutral" withDot={false}>{label}</StatusPill>;
+    } },
+    { accessorKey: 'status', header: 'Status', cell: (i) => <MRStatusPill value={i.getValue<string>()} /> },
+  ],
+};
+
 const purchaseOrders: DoctypeConfig = {
   slug: 'purchase-orders', modulePath: '/accounting', module: 'Procurement',
   doctype: 'purchase_order', title: 'Purchase Orders', singular: 'Purchase Order', icon: ClipboardList,
@@ -386,7 +421,7 @@ const issues: DoctypeConfig = {
 
 export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
-  salesInvoices, purchaseOrders, purchaseInvoices, paymentEntries, journalEntries,
+  salesInvoices, materialRequests, purchaseOrders, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
   employees, leads, projects, boms, workOrders, assets, issues,
 };
@@ -405,8 +440,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/buying', name: 'Procurement', icon: ShoppingBag,
-    description: 'Suppliers, purchase orders, receipts, and bills.',
-    doctypes: [purchaseOrders, purchaseInvoices, suppliers, items],
+    description: 'Material requests, purchase orders, receipts, and bills.',
+    doctypes: [materialRequests, purchaseOrders, purchaseInvoices, suppliers, items],
   },
   {
     path: '/selling', name: 'Sales', icon: BarChart3,
