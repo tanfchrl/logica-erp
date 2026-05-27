@@ -7,6 +7,13 @@ import { fileURLToPath, URL } from 'node:url';
 //   - else http://localhost:8080 (host machine running both)
 const apiTarget = process.env['VITE_API_TARGET'] ?? 'http://localhost:8080';
 
+// Agent service runs as a separate process on :8090. We proxy /api/agent
+// (the path the agent itself registers under) → 8090 so the browser sees
+// one origin. Default mirrors the apiTarget's host with port 8090 swapped
+// in, so the same container-vs-host autodetect works.
+const agentTarget = process.env['VITE_AGENT_TARGET']
+  ?? apiTarget.replace(/:8080$/, ':8090');
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -18,6 +25,12 @@ export default defineConfig({
     port: 5173,
     host: '0.0.0.0',
     proxy: {
+      // /api/agent → agent service, plain /api → ERP. Vite proxy uses prefix
+      // matching with insertion order, so the longer prefix must come first.
+      '/api/agent': {
+        target: agentTarget,
+        changeOrigin: true,
+      },
       '/api': {
         target: apiTarget,
         changeOrigin: true,

@@ -26,7 +26,19 @@ const (
 
 type ctxKey int
 
-const ctxRequestID ctxKey = iota
+const (
+	ctxRequestID ctxKey = iota
+	ctxBearer
+)
+
+// BearerFromContext returns the raw bearer token (no "Bearer " prefix) that
+// the Auth middleware stashed on the request context. Used by the agent
+// service to forward the acting user's JWT to ERP API calls — the agent
+// never holds its own credential.
+func BearerFromContext(ctx context.Context) string {
+	v, _ := ctx.Value(ctxBearer).(string)
+	return v
+}
 
 // RequestID middleware sets X-Request-Id (in/out) and puts it on the context.
 func RequestID(next http.Handler) http.Handler {
@@ -108,6 +120,9 @@ func Auth(db *dbx.DB, signer *auth.Signer, publicPrefixes []string) func(http.Ha
 				p.Scopes = tokenScopes
 			}
 			ctx := auth.WithPrincipal(r.Context(), p)
+			// Stash the raw bearer token so downstream handlers (notably the
+			// agent service's tool dispatcher) can forward it to the ERP API.
+			ctx = context.WithValue(ctx, ctxBearer, tok)
 
 			if companyID := r.Header.Get(HeaderCompany); companyID != "" {
 				if !containsString(p.Companies, companyID) {

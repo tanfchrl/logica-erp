@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Menu } from 'lucide-react';
+import { Search, Menu, Sparkles } from 'lucide-react';
 import { useUI } from '@/store/ui';
 import { Avatar } from '@/components/Avatar';
 import { Kbd } from '@/components/Kbd';
@@ -8,6 +8,7 @@ import {
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from '@/components/DropdownMenu';
 import { NotificationsPopover } from '@/components/NotificationsPopover';
+import { CopilotPanel } from '@/components/CopilotPanel';
 import { logout, me } from '@/lib/auth';
 
 /**
@@ -20,6 +21,7 @@ export function TopChrome() {
   const toggleTheme = useUI((s) => s.toggleTheme);
 
   const [user, setUser] = useState<{ full_name: string; email: string } | null>(null);
+  const [copilotOpen, setCopilotOpen] = useState(false);
   useEffect(() => {
     me()
       .then((u) => setUser({ full_name: u.full_name || u.email, email: u.email }))
@@ -49,6 +51,22 @@ export function TopChrome() {
       </button>
 
       <div className="ml-auto flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => setCopilotOpen((o) => !o)}
+          aria-label="Logica AI Copilot"
+          className={
+            'relative inline-flex items-center justify-center size-8 rounded-full transition-colors ' +
+            (copilotOpen
+              ? 'bg-accent/15 text-accent'
+              : 'text-steel hover:bg-surface hover:text-ink')
+          }
+          title="Logica AI Copilot"
+        >
+          <Sparkles className="size-4" />
+          <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-accent" aria-hidden />
+        </button>
+
         <NotificationsPopover />
 
         <DropdownMenu>
@@ -78,6 +96,8 @@ export function TopChrome() {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+
+      <CopilotPanel open={copilotOpen} onClose={() => setCopilotOpen(false)} />
     </div>
   );
 }

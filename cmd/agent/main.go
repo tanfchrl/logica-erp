@@ -33,6 +33,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/agent/llm"
 	"github.com/tandigital/logica-erp/internal/agent/policy"
 	"github.com/tandigital/logica-erp/internal/agent/session"
+	"github.com/tandigital/logica-erp/internal/agent/tools"
 	"github.com/tandigital/logica-erp/internal/agentcontract"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
@@ -77,8 +78,7 @@ func main() {
 	sessStore := session.New(db)
 	llmClient := llm.New(llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel})
 	erp := erpclient.New(erpBase)
-	_ = gate
-	_ = erp
+	toolReg := tools.New(erp, registry)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
@@ -108,7 +108,7 @@ func main() {
 
 		hapi := humachi.New(api, humaCfg)
 
-		registerChat(hapi, sessStore, rec, llmClient, registry)
+		registerChat(hapi, sessStore, rec, llmClient, registry, toolReg, gate)
 		registerSessions(hapi, sessStore)
 	})
 
@@ -154,12 +154,18 @@ func registerSessions(api huma.API, store *session.Store) {
 	})
 }
 
-func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *llm.Client, registry *agentcontract.Registry) {
+// maxToolIterations caps the number of LLM<->tool round-trips per turn so a
+// malformed model can't spin forever. 6 is plenty for queries like
+// "find the customer and show me their AR aging" which usually take 2-3 hops.
+const maxToolIterations = 6
+
+func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *llm.Client,
+	registry *agentcontract.Registry, toolReg *tools.Registry, gate *policy.Gate) {
 	huma.Register(api, huma.Operation{
 		OperationID: "agent-chat",
 		Method:      http.MethodPost,
 		Path:        "/chat",
-		Summary:     "Send a turn to the agent. Phase-A stub returns a canned reply when no LLM is configured.",
+		Summary:     "Send a turn to the agent. Runs a ReAct loop over the tool registry.",
 		Tags:        []string{"Agent / Chat"},
 	}, func(ctx context.Context, in *chatIn) (*chatOut, error) {
 		p := auth.FromContext(ctx)
@@ -167,6 +173,10 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
 		}
 		co := auth.CompanyFromContext(ctx)
+
+		// Forward the user's JWT to the ERP API on tool calls. The agent
+		// never holds its own credential.
+		erpcc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
 
 		// Resume or create the session.
 		var sess *session.Session
@@ -189,85 +199,185 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 		if err != nil {
 			return nil, httpx.MapError(err)
 		}
-		nextTurn := len(history) + 1
+		turn := len(history) + 1
 
-		// Record the user turn.
-		userMsg := session.Message{
-			SessionID: sess.ID, Turn: nextTurn,
-			Role: "user", Content: in.Body.Message,
-		}
-		if err := store.AppendMessage(ctx, userMsg); err != nil {
+		// Persist + audit the user prompt.
+		if err := store.AppendMessage(ctx, session.Message{
+			SessionID: sess.ID, Turn: turn, Role: "user", Content: in.Body.Message,
+		}); err != nil {
 			return nil, httpx.MapError(err)
 		}
 		rec.Record(ctx, audit.Event{
 			SessionID: sess.ID, UserID: p.UserID, CompanyID: co,
-			Turn: nextTurn, Type: audit.EventPrompt,
+			Turn: turn, Type: audit.EventPrompt,
 			Payload: map[string]any{"content": in.Body.Message},
 			Model:   ll.Model(),
 		})
 
-		// Build the assistant reply. Phase-A behaviour:
-		//   - If LLM is configured: call it with no tools (just the prompt) so
-		//     ops can verify the network path end-to-end.
-		//   - Otherwise: return a canned reply that names the loaded contracts
-		//     so the FE has something to render while wiring proceeds.
+		// No LLM? Return the canned reply so the FE can still render.
+		if !ll.Configured() {
+			reply := fmt.Sprintf(
+				"Agent service is up. No LLM is configured — set AGENT_LLM_BASE_URL/AGENT_LLM_API_KEY/AGENT_LLM_MODEL to enable conversation. Loaded %s.",
+				registry.Summary(),
+			)
+			turn++
+			_ = store.AppendMessage(ctx, session.Message{
+				SessionID: sess.ID, Turn: turn, Role: "assistant", Content: reply,
+			})
+			return &chatOut{Body: chatBody{SessionID: sess.ID, Reply: reply, Turn: turn}}, nil
+		}
+
+		// ---- ReAct loop ----
+		msgs := buildSystemAndHistory(registry, history)
+		msgs = append(msgs, llm.Message{Role: "user", Content: in.Body.Message})
+
 		var assistantContent string
+		var totalIn, totalOut int
 		started := time.Now()
-		var tokensIn, tokensOut int
-		if ll.Configured() {
-			req := buildBaseRequest(registry, history, in.Body.Message)
-			resp, err := ll.Chat(ctx, req)
+		for iter := 0; iter < maxToolIterations; iter++ {
+			resp, err := ll.Chat(ctx, llm.Request{
+				Messages:    msgs,
+				Tools:       toolReg.LLMTools(),
+				Temperature: 0.2,
+			})
 			if err != nil {
 				rec.Record(ctx, audit.Event{
 					SessionID: sess.ID, UserID: p.UserID, CompanyID: co,
-					Turn: nextTurn + 1, Type: audit.EventError,
+					Turn: turn + 1, Type: audit.EventError,
 					Payload: map[string]any{"err": err.Error()},
 					LatencyMS: int(time.Since(started) / time.Millisecond),
 				})
 				assistantContent = "I couldn't reach the language model: " + err.Error()
-			} else {
-				if len(resp.Choices) > 0 {
-					assistantContent = resp.Choices[0].Message.Content
-				}
-				tokensIn = resp.Usage.PromptTokens
-				tokensOut = resp.Usage.CompletionTokens
+				break
 			}
-		} else {
-			assistantContent = fmt.Sprintf(
-				"Agent service is up. No LLM is configured — set AGENT_LLM_BASE_URL/AGENT_LLM_API_KEY/AGENT_LLM_MODEL to enable conversation. Loaded %s.",
-				registry.Summary(),
-			)
+			totalIn += resp.Usage.PromptTokens
+			totalOut += resp.Usage.CompletionTokens
+			if len(resp.Choices) == 0 {
+				break
+			}
+			choice := resp.Choices[0]
+
+			// Tool call? Run each one, persist, feed results back.
+			if len(choice.Message.ToolCalls) > 0 {
+				turn++
+				tcBlob, _ := json.Marshal(choice.Message.ToolCalls)
+				_ = store.AppendMessage(ctx, session.Message{
+					SessionID: sess.ID, Turn: turn, Role: "assistant",
+					Content: choice.Message.Content, ToolCalls: tcBlob,
+				})
+				msgs = append(msgs, choice.Message)
+
+				for _, tc := range choice.Message.ToolCalls {
+					rec.Record(ctx, audit.Event{
+						SessionID: sess.ID, UserID: p.UserID, CompanyID: co,
+						Turn: turn, Type: audit.EventToolCall,
+						Payload: map[string]any{"name": tc.Function.Name, "arguments": tc.Function.Arguments},
+						Model:   ll.Model(),
+					})
+					result := runOneToolCall(ctx, toolReg, gate, erpcc, tc, rec,
+						audit.Event{SessionID: sess.ID, UserID: p.UserID, CompanyID: co, Turn: turn})
+					resultBytes, _ := json.Marshal(result)
+					turn++
+					_ = store.AppendMessage(ctx, session.Message{
+						SessionID: sess.ID, Turn: turn, Role: "tool",
+						Content: string(resultBytes), ToolCallID: tc.ID, ToolName: tc.Function.Name,
+					})
+					msgs = append(msgs, llm.Message{
+						Role: "tool", ToolCallID: tc.ID, Name: tc.Function.Name,
+						Content: string(resultBytes),
+					})
+				}
+				continue // next iteration: re-ask the model with tool results in scope
+			}
+
+			// No tool call — final assistant turn.
+			assistantContent = choice.Message.Content
+			break
 		}
 
-		assistantMsg := session.Message{
-			SessionID: sess.ID, Turn: nextTurn + 1,
-			Role: "assistant", Content: assistantContent,
-		}
-		if err := store.AppendMessage(ctx, assistantMsg); err != nil {
-			return nil, httpx.MapError(err)
-		}
+		turn++
+		_ = store.AppendMessage(ctx, session.Message{
+			SessionID: sess.ID, Turn: turn, Role: "assistant", Content: assistantContent,
+		})
 		rec.Record(ctx, audit.Event{
 			SessionID: sess.ID, UserID: p.UserID, CompanyID: co,
-			Turn: nextTurn + 1, Type: audit.EventToolResult,
+			Turn: turn, Type: audit.EventToolResult, // re-using as "assistant completion"
 			Payload: map[string]any{"content": assistantContent},
-			Model:   ll.Model(), TokensIn: tokensIn, TokensOut: tokensOut,
+			Model:   ll.Model(), TokensIn: totalIn, TokensOut: totalOut,
 			LatencyMS: int(time.Since(started) / time.Millisecond),
 		})
 
 		return &chatOut{Body: chatBody{
 			SessionID: sess.ID,
 			Reply:     assistantContent,
-			Turn:      nextTurn + 1,
+			Turn:      turn,
 		}}, nil
 	})
 }
 
-func buildBaseRequest(reg *agentcontract.Registry, history []session.Message, userMessage string) llm.Request {
+// runOneToolCall executes a single LLM-emitted tool call through the policy
+// gate and the tool registry, recording audit events as it goes. Returns a
+// JSON-serialisable result that gets fed back into the next LLM iteration.
+func runOneToolCall(ctx context.Context, reg *tools.Registry, gate *policy.Gate,
+	erpcc erpclient.CallContext, tc llm.ToolCall, rec *audit.Recorder, base audit.Event) any {
+	t, ok := reg.Lookup(tc.Function.Name)
+	if !ok {
+		return map[string]any{"error": "unknown tool: " + tc.Function.Name}
+	}
+	// Doctype, if the args carry one, drives policy. Tools that don't
+	// involve a doctype (reports, search) skip the gate.
+	var argsObj map[string]any
+	_ = json.Unmarshal([]byte(tc.Function.Arguments), &argsObj)
+	doctype, _ := argsObj["doctype"].(string)
+	if doctype != "" {
+		// Resolve tool tier via gate. The gate's per-doctype tier list lives
+		// in AGENT_CONTRACT.md.
+		dec := gate.Check(doctype, mapToolForGate(t.Name))
+		if !dec.Allowed {
+			ev := base
+			ev.Type = audit.EventPolicyBlocked
+			ev.Payload = map[string]any{"tool": t.Name, "doctype": doctype, "reason": dec.Reason}
+			rec.Record(ctx, ev)
+			return map[string]any{"error": "policy_blocked: " + dec.Reason}
+		}
+	}
+	out, err := t.Run(ctx, erpcc, json.RawMessage(tc.Function.Arguments))
+	if err != nil {
+		ev := base
+		ev.Type = audit.EventError
+		ev.Payload = map[string]any{"tool": t.Name, "err": err.Error()}
+		rec.Record(ctx, ev)
+		return map[string]any{"error": err.Error()}
+	}
+	ev := base
+	ev.Type = audit.EventToolResult
+	ev.Payload = map[string]any{"tool": t.Name, "ok": true}
+	rec.Record(ctx, ev)
+	return out
+}
+
+// mapToolForGate maps a registered tool name to the tier-level string used
+// in AGENT_CONTRACT.md tier{0,1,2}_tools lists.
+func mapToolForGate(toolName string) string {
+	switch toolName {
+	case "list_documents":
+		return "list_with_filters"
+	case "get_document":
+		return "get_by_id"
+	}
+	return toolName
+}
+
+// buildSystemAndHistory composes the system prompt from contract context
+// plus the persisted conversation history (excluding the just-appended user
+// message — the caller adds that back). Used by the chat handler.
+func buildSystemAndHistory(reg *agentcontract.Registry, history []session.Message) []llm.Message {
 	sys := []string{
-		"You are Logica AI Copilot — a tool-using agent for an Indonesian ERP.",
-		"You assist Bahasa Indonesia or English speakers with their day-to-day ERP tasks.",
-		"Be concise and concrete. Refer to documents by their human name (e.g. 'SI-2026-0042') not their internal id.",
-		"Never invent data — if you don't have it, say so plainly.",
+		"You are Logica AI Copilot — a tool-using agent for an Indonesian ERP (PSAK aligned).",
+		"You answer queries about the user's own ERP data by calling tools. Never invent data.",
+		"When the user mentions a record by partial name, call global_search first.",
+		"Show currency amounts in IDR with comma thousand separators (Rp 1.234.567).",
+		"Be concise. Reply in the same language the user used (Bahasa Indonesia or English).",
 	}
 	for _, c := range reg.All() {
 		if c.SystemContext == "" {
@@ -275,17 +385,16 @@ func buildBaseRequest(reg *agentcontract.Registry, history []session.Message, us
 		}
 		sys = append(sys, fmt.Sprintf("[%s] %s", c.DisplayName, c.SystemContext))
 	}
-	messages := []llm.Message{{Role: "system", Content: strings.Join(sys, "\n\n")}}
+	msgs := []llm.Message{{Role: "system", Content: strings.Join(sys, "\n\n")}}
 	for _, m := range history {
-		// Don't replay tool messages in Phase A — we have no tools yet, and
-		// a stray tool message confuses the model.
-		if m.Role == "tool" {
-			continue
+		llmMsg := llm.Message{Role: m.Role, Content: m.Content,
+			ToolCallID: m.ToolCallID, Name: m.ToolName}
+		if len(m.ToolCalls) > 0 {
+			_ = json.Unmarshal(m.ToolCalls, &llmMsg.ToolCalls)
 		}
-		messages = append(messages, llm.Message{Role: m.Role, Content: m.Content})
+		msgs = append(msgs, llmMsg)
 	}
-	messages = append(messages, llm.Message{Role: "user", Content: userMessage})
-	return llm.Request{Messages: messages, Temperature: 0.2}
+	return msgs
 }
 
 // ---- HTTP types ----
@@ -336,7 +445,5 @@ func truncate(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// Quieten the "imported and not used" linter for permission until Phase B
-// adds policy-gated tools.
+// permission import retained so future Phase-C policy checks can reuse it.
 var _ = permission.ActionRead
-var _ = json.RawMessage(nil)
