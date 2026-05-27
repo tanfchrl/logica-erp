@@ -46,8 +46,8 @@ export function APITokensSection() {
       </div>
 
       <div className="rounded-lg border border-hairline bg-surface-soft p-3 text-caption text-stone">
-        <strong className="text-charcoal">Heads up:</strong> tokens are recorded and revocable here, but the bearer-token
-        middleware doesn't yet accept them — JWT still required. Wiring is a one-line follow-up in <span className="font-mono">httpx.Auth</span>.
+        Tokens authenticate against any endpoint accepting <span className="font-mono">Authorization: Bearer …</span>.
+        Scopes intersect with the user's role permissions — a Read-only token can never write even if the user is admin.
       </div>
 
       {isLoading ? <Card><Skeleton className="h-32 w-full" /></Card> :
@@ -65,6 +65,7 @@ export function APITokensSection() {
               <tr className="text-micro-uppercase text-stone">
                 <th className="text-left  font-medium px-4 py-2.5">Name</th>
                 <th className="text-left  font-medium px-4 py-2.5">Prefix</th>
+                <th className="text-left  font-medium px-4 py-2.5">Scopes</th>
                 <th className="text-left  font-medium px-4 py-2.5">User</th>
                 <th className="text-left  font-medium px-4 py-2.5">Created</th>
                 <th className="text-left  font-medium px-4 py-2.5">Last used</th>
@@ -77,6 +78,11 @@ export function APITokensSection() {
                 <tr key={t.id} className="border-b border-hairline last:border-0">
                   <td className="px-4 py-2 text-ink font-medium">{t.name}</td>
                   <td className="px-4 py-2 text-charcoal font-mono text-caption">{t.prefix}…</td>
+                  <td className="px-4 py-2 text-stone font-mono text-caption truncate max-w-[180px]">
+                    {(t.scopes ?? []).length === 0 || (t.scopes.length === 1 && t.scopes[0] === '*')
+                      ? 'full'
+                      : t.scopes.join(' ')}
+                  </td>
                   <td className="px-4 py-2 text-stone truncate max-w-[200px]">{t.user_email || t.user_id}</td>
                   <td className="px-4 py-2 text-stone num">{new Date(t.created_at).toLocaleDateString('id-ID')}</td>
                   <td className="px-4 py-2 text-stone num">{t.last_used_at ? new Date(t.last_used_at).toLocaleString('id-ID') : '—'}</td>
@@ -109,14 +115,35 @@ export function APITokensSection() {
   );
 }
 
+type ScopePreset = 'full' | 'read' | 'write' | 'print' | 'custom';
+
+const PRESET_SCOPES: Record<Exclude<ScopePreset, 'custom'>, string[]> = {
+  full:  ['*'],
+  read:  ['read:*'],
+  write: ['read:*', 'write:*'],
+  print: ['read:*', 'print:*'],
+};
+
 function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (r: CreateResult) => void }) {
-  const [name, setName] = useState('');
-  const [expiry, setExpiry] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [name, setName]       = useState('');
+  const [expiry, setExpiry]   = useState('');
+  const [preset, setPreset]   = useState<ScopePreset>('full');
+  const [customScopes, setCS] = useState('');
+  const [error, setError]     = useState<string | null>(null);
+
+  const effectiveScopes =
+    preset === 'custom'
+      ? customScopes.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean)
+      : PRESET_SCOPES[preset];
+
   const mut = useMutation({
     mutationFn: () => api<CreateResult>('/admin/api-tokens', {
       method: 'POST',
-      body: { name, ...(expiry ? { expires_at: new Date(expiry).toISOString() } : {}) },
+      body: {
+        name,
+        scopes: effectiveScopes,
+        ...(expiry ? { expires_at: new Date(expiry).toISOString() } : {}),
+      },
     }),
     onSuccess: (r) => onCreated(r),
     onError: (e: Error) => setError(e.message),
@@ -129,6 +156,27 @@ function CreateDialog({ onClose, onCreated }: { onClose: () => void; onCreated: 
         <form onSubmit={(e) => { e.preventDefault(); setError(null); if (!name.trim()) return setError('Name required'); mut.mutate(); }}
           className="mt-4 space-y-3">
           <Field label="Name" hint="e.g. ‘Tokopedia sync’"><Input value={name} onChange={(e) => setName(e.target.value)} required autoFocus /></Field>
+          <Field label="Scope" hint="Restricts what the token can do. Custom takes a comma-separated list (read:*, write:invoice, …)">
+            <select
+              className="input-base"
+              value={preset}
+              onChange={(e) => setPreset(e.target.value as ScopePreset)}
+            >
+              <option value="full">Full access (everything)</option>
+              <option value="write">Read + write</option>
+              <option value="read">Read-only</option>
+              <option value="print">Read + print</option>
+              <option value="custom">Custom…</option>
+            </select>
+          </Field>
+          {preset === 'custom' && (
+            <Field label="Custom scopes" hint="Space- or comma-separated. e.g. 'read:* write:invoice'">
+              <Input value={customScopes} onChange={(e) => setCS(e.target.value)} className="font-mono" />
+            </Field>
+          )}
+          <div className="text-caption text-stone">
+            Effective: <span className="font-mono text-ink">{effectiveScopes.length ? effectiveScopes.join(' ') : '(none — token will be locked out)'}</span>
+          </div>
           <Field label="Expires" hint="Optional"><Input type="date" value={expiry} onChange={(e) => setExpiry(e.target.value)} /></Field>
           {error && <div className="rounded-md bg-brand-error/10 text-brand-error text-caption px-3 py-2">{error}</div>}
           <div className="flex justify-end gap-2 pt-2 border-t border-hairline">

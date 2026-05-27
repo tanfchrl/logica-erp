@@ -89,10 +89,16 @@ type Service struct {
 	// Approvals is optional. When set, Submit() consults active approval_rules
 	// for this doctype + company; missing approvals block submit.
 	Approvals approvalChecker
+	// Workflow is optional. Gates submit by role.
+	Workflow workflowGate
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -215,6 +221,12 @@ func (s *Service) Submit(ctx context.Context, id string) (*JournalEntry, error) 
 			return submittable.ErrNotDraft
 		}
 
+		// Workflow role gate.
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "journal_entry"); err != nil {
+				return err
+			}
+		}
 		// Approval gate. Both total_debit and total_credit are exposed; rules
 		// typically key off total_debit since the two are equal at this point.
 		if s.Approvals != nil {

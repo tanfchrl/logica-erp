@@ -100,7 +100,14 @@ type PayrollEntryCreateInput struct {
 	JKKRate                          string  `json:"jkk_rate,omitempty"`     // optional override (default 0.24%)
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db        *dbx.DB
+	Approvals approvalChecker
+}
+
+type approvalChecker interface {
+	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -347,6 +354,13 @@ func (s *Service) Submit(ctx context.Context, id string) (*PayrollEntry, error) 
 		}
 		if pe.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Approvals != nil {
+			net, _ := pe.TotalNet.Float64()
+			if err := s.Approvals.CheckSubmit(ctx, tx, "payroll_entry", pe.ID, pe.Name, pe.CompanyID,
+				map[string]any{"total_net": net, "amount": net}); err != nil {
+				return err
+			}
 		}
 
 		var paymentCur string

@@ -138,6 +138,8 @@ type Service struct {
 	// Approvals is optional. When set, Submit() consults active approval_rules
 	// for this doctype + company; missing approvals block submit.
 	Approvals approvalChecker
+	// Workflow is optional. Gates submit by role.
+	Workflow workflowGate
 	// Notifier is optional. Submit() fires payment.received / payment.made
 	// after successful commit.
 	Notifier notifier
@@ -145,6 +147,10 @@ type Service struct {
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 type notifier interface {
@@ -404,6 +410,12 @@ func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) 
 			return errors.New("payment_entry.submit: internal_transfer is not implemented yet")
 		}
 
+		// Workflow role gate.
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "payment_entry"); err != nil {
+				return err
+			}
+		}
 		// Approval gate. Expose paid_amount / received_amount plus a generic
 		// `amount` (the relevant side of the transfer) so rules can be written
 		// against the most natural field name.

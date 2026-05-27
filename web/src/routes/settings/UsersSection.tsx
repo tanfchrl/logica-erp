@@ -22,6 +22,7 @@ interface User {
   is_system: boolean;
   roles: string[];
   companies: string[];
+  ip_allowlist: string[];
   created_at: string;
   updated_at: string;
 }
@@ -206,11 +207,18 @@ function TabChip({
 
 function ProfilePanel({ user, onChanged }: { user: User; onChanged: () => void }) {
   const [fullName, setFullName] = useState(user.full_name ?? '');
+  const [ipAllow, setIPAllow]   = useState((user.ip_allowlist ?? []).join(', '));
   const [pwOpen, setPwOpen]     = useState(false);
   const [error, setError]       = useState<string | null>(null);
 
   const save = useMutation({
-    mutationFn: () => api<User>(`/admin/users/${user.id}`, { method: 'PUT', body: { full_name: fullName } }),
+    mutationFn: () => api<User>(`/admin/users/${user.id}`, {
+      method: 'PUT',
+      body: {
+        full_name: fullName,
+        ip_allowlist: ipAllow.split(/[,\s]+/).map((s) => s.trim()).filter(Boolean),
+      },
+    }),
     onSuccess: () => { onChanged(); setError(null); },
     onError:   (e: Error) => setError(e.message),
   });
@@ -225,6 +233,10 @@ function ProfilePanel({ user, onChanged }: { user: User; onChanged: () => void }
           <Input value={user.email} disabled />
         </Field>
       </div>
+
+      <Field label="IP allowlist" hint="Comma- or space-separated CIDRs (e.g. 203.0.113.0/24, 198.51.100.42/32). Empty = no restriction.">
+        <Input value={ipAllow} onChange={(e) => setIPAllow(e.target.value)} className="font-mono" placeholder="(none)" />
+      </Field>
 
       {error && (
         <div className="rounded-md bg-brand-error/10 text-brand-error text-caption px-3 py-2">{error}</div>

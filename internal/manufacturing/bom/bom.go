@@ -69,7 +69,14 @@ type BOMLineInput struct {
 	Rate   string `json:"rate,omitempty"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db        *dbx.DB
+	Approvals approvalChecker
+}
+
+type approvalChecker interface {
+	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -180,6 +187,13 @@ func (s *Service) Submit(ctx context.Context, id string) (*BOM, error) {
 		}
 		if b.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Approvals != nil {
+			cost, _ := b.TotalCost.Float64()
+			if err := s.Approvals.CheckSubmit(ctx, tx, "bom", b.ID, b.Name, b.CompanyID,
+				map[string]any{"total_cost": cost, "amount": cost}); err != nil {
+				return err
+			}
 		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE bom SET docstatus = 1, submitted_at = now(), submitted_by = $1, updated_by = $1 WHERE id = $2`,

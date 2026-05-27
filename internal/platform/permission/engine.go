@@ -54,6 +54,11 @@ func (e *Engine) Check(ctx context.Context, doctype string, action Action) error
 	if co != "" && !contains(p.Companies, co) {
 		return fmt.Errorf("%w: no access to company %s", ErrForbidden, co)
 	}
+	// API-token scope gate. Applied BEFORE the IsSystem shortcut so a system
+	// user's scoped token can't outrun its scopes.
+	if len(p.Scopes) > 0 && !scopesAllow(p.Scopes, action, doctype) {
+		return fmt.Errorf("%w: token scope lacks %s on %s", ErrForbidden, action, doctype)
+	}
 	if p.IsSystem {
 		return nil
 	}
@@ -65,6 +70,44 @@ func (e *Engine) Check(ctx context.Context, doctype string, action Action) error
 		return fmt.Errorf("%w: role lacks %s on %s", ErrForbidden, action, doctype)
 	}
 	return nil
+}
+
+// scopesAllow returns true if the token's scope set permits (action, doctype).
+// Vocabulary (any match wins):
+//
+//	"*"                full access
+//	"<bucket>:*"       bucket-wide, any doctype
+//	"<bucket>:<dt>"    bucket + specific doctype
+//
+// Buckets:
+//
+//	read  → ActionRead
+//	write → ActionWrite | Create | Delete | Submit | Cancel | Amend
+//	print → ActionPrint
+//	export→ ActionExport
+func scopesAllow(scopes []string, action Action, doctype string) bool {
+	bucket := actionBucket(action)
+	for _, s := range scopes {
+		switch s {
+		case "*", bucket + ":*", bucket + ":" + doctype:
+			return true
+		}
+	}
+	return false
+}
+
+func actionBucket(a Action) string {
+	switch a {
+	case ActionRead:
+		return "read"
+	case ActionWrite, ActionCreate, ActionDelete, ActionSubmit, ActionCancel, ActionAmend:
+		return "write"
+	case ActionPrint:
+		return "print"
+	case ActionExport:
+		return "export"
+	}
+	return "write" // safest fallback
 }
 
 // RowFilter returns SQL fragments to AND into a list query, scoping rows the principal may see.

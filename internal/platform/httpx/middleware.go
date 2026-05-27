@@ -76,14 +76,18 @@ func Auth(db *dbx.DB, signer *auth.Signer, publicPrefixes []string) func(http.Ha
 
 			// Two-track validation: API tokens get the lt_ prefix; everything
 			// else is treated as a JWT.
-			var userID string
+			var (
+				userID      string
+				tokenScopes []string
+			)
 			if strings.HasPrefix(tok, "lt_") {
-				uid, err := verifyAPIToken(r.Context(), db, tok)
+				uid, scopes, err := verifyAPIToken(r.Context(), db, tok)
 				if err != nil {
 					writeJSONError(w, http.StatusUnauthorized, "unauthenticated", "invalid or expired api token")
 					return
 				}
 				userID = uid
+				tokenScopes = scopes
 			} else {
 				claims, err := signer.Verify(tok)
 				if err != nil {
@@ -97,6 +101,11 @@ func Auth(db *dbx.DB, signer *auth.Signer, publicPrefixes []string) func(http.Ha
 			if err != nil {
 				writeJSONError(w, http.StatusUnauthorized, "unauthenticated", "user no longer valid")
 				return
+			}
+			// Attach token scopes (nil for JWT path = full access; ["*"] from the
+			// token also means no restriction — we normalise both to nil).
+			if len(tokenScopes) > 0 && !(len(tokenScopes) == 1 && tokenScopes[0] == "*") {
+				p.Scopes = tokenScopes
 			}
 			ctx := auth.WithPrincipal(r.Context(), p)
 
@@ -167,27 +176,28 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 // Auth rejection happens if: token unknown, revoked, expired, or the owning
 // user is disabled. permission.LoadPrincipal (called by the caller) is the
 // final gate on the user being usable.
-func verifyAPIToken(ctx context.Context, db *dbx.DB, plaintext string) (string, error) {
+func verifyAPIToken(ctx context.Context, db *dbx.DB, plaintext string) (string, []string, error) {
 	sum := sha256.Sum256([]byte(plaintext))
 	hashHex := hex.EncodeToString(sum[:])
 
 	var (
 		id     string
 		userID string
+		scopes []string
 	)
 	err := db.QueryRow(ctx, `
-		SELECT t.id, t.user_id
+		SELECT t.id, t.user_id, t.scopes
 		FROM api_token t
 		JOIN users u ON u.id = t.user_id
 		WHERE t.token_hash = $1
 		  AND t.revoked_at IS NULL
 		  AND (t.expires_at IS NULL OR t.expires_at > now())
-		  AND u.enabled = true`, hashHex).Scan(&id, &userID)
+		  AND u.enabled = true`, hashHex).Scan(&id, &userID, &scopes)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return "", errors.New("api_token: not found or expired")
+			return "", nil, errors.New("api_token: not found or expired")
 		}
-		return "", err
+		return "", nil, err
 	}
 
 	// Fire-and-forget last-used touch. Don't block the request; if it fails the
@@ -198,5 +208,5 @@ func verifyAPIToken(ctx context.Context, db *dbx.DB, plaintext string) (string, 
 		_, _ = db.Exec(bgCtx, `UPDATE api_token SET last_used_at = now() WHERE id = $1`, id)
 	}()
 
-	return userID, nil
+	return userID, scopes, nil
 }

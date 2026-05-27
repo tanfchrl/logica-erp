@@ -160,12 +160,19 @@ type Service struct {
 	// Approvals is optional. When set, Submit() consults active approval_rules
 	// for this doctype + company; missing approvals block submit.
 	Approvals approvalChecker
+	// Workflow is optional. Gates submit by role when a workflow definition
+	// exists for the doctype.
+	Workflow workflowGate
 }
 
 // approvalChecker is the narrow contract we need from workflow.ApprovalEngine.
 // Defined locally so this package doesn't depend on the workflow package.
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -506,6 +513,12 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 			return errors.New("purchase_invoice: grand_total is zero, nothing to post")
 		}
 
+		// Workflow role gate.
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "purchase_invoice"); err != nil {
+				return err
+			}
+		}
 		// Approval gate. If the workspace has active approval_rules for PI,
 		// every matching rule must have an approved request before submit
 		// can complete. Pending requests are created on the first attempt.

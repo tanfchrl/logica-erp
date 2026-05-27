@@ -63,7 +63,10 @@ func (d *Dispatcher) Fire(eventKey string, payload map[string]any) {
 	}()
 }
 
-// dispatch runs the actual fan-out. Exported for tests; production callers use Fire.
+// dispatch matches rules + materializes one notification_dispatch row per
+// (rule, channel, recipient). Rows are committed even if subsequent rows
+// fail to insert. A background worker (Dispatcher.RunWorker) processes the
+// queue with exponential backoff.
 func (d *Dispatcher) dispatch(ctx context.Context, eventKey string, payload map[string]any) error {
 	companyID, _ := payload["company_id"].(string)
 
@@ -75,12 +78,10 @@ func (d *Dispatcher) dispatch(ctx context.Context, eventKey string, payload map[
 		return nil
 	}
 
-	subject, body := defaultMessage(eventKey, payload)
-
-	var (
-		linkDoctype = strOrEmpty(payload["doctype"])
-		linkDocID   = strOrEmpty(payload["document_id"])
-	)
+	payloadJSON, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
 
 	for _, r := range rules {
 		if !ruleMatches(r, payload) {
@@ -93,29 +94,142 @@ func (d *Dispatcher) dispatch(ctx context.Context, eventKey string, payload map[
 		}
 		for _, ch := range r.Channels {
 			for _, u := range users {
-				switch ch {
-				case "in_app":
-					if err := d.deliverInApp(ctx, u.id, subject, body, linkDoctype, linkDocID); err != nil {
-						d.log.Warn("in_app", "user", u.id, "err", err)
-					}
-				case "email":
-					if d.email == nil {
-						d.log.Debug("email skipped — no transport wired")
-						continue
-					}
-					vars := mergedVars(payload, u)
-					if _, err := d.email.SendTemplated(ctx, eventKey, u.email, vars); err != nil {
-						d.log.Warn("email", "user", u.email, "err", err)
-					}
-				case "whatsapp":
-					d.log.Info("whatsapp skipped — transport unwired",
-						"user", u.email, "event", eventKey)
+				addr := u.email
+				if ch == "in_app" {
+					addr = ""
+				}
+				if _, err := d.db.Exec(ctx, `
+					INSERT INTO notification_dispatch
+					  (id, rule_id, event_key, channel, recipient_user, recipient_addr, payload)
+					VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+					dbx.NewIDWithPrefix("ndsp"), r.ID, eventKey, ch, u.id, addr, payloadJSON); err != nil {
+					d.log.Warn("dispatch enqueue", "rule", r.ID, "channel", ch, "user", u.id, "err", err)
 				}
 			}
 		}
 	}
+
+	// Best-effort kick: try delivery of any due rows immediately so well-
+	// behaved channels don't wait for the next worker tick.
+	go d.drain(context.Background())
 	return nil
 }
+
+// RunWorker starts a background loop that processes the dispatch queue. Call
+// it once from main.go. Stops when ctx is cancelled.
+func (d *Dispatcher) RunWorker(ctx context.Context, tick time.Duration) {
+	if tick <= 0 {
+		tick = 10 * time.Second
+	}
+	t := time.NewTicker(tick)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			d.drain(ctx)
+		}
+	}
+}
+
+// drain claims due rows and attempts delivery. Each row gets its own short
+// transaction-less attempt — the dispatch row is the unit of work, not a tx.
+func (d *Dispatcher) drain(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 60*time.Second)
+	defer cancel()
+	rows, err := d.db.Query(ctx, `
+		SELECT id, event_key, channel, recipient_user, recipient_addr,
+		       payload, attempt, max_attempts
+		FROM notification_dispatch
+		WHERE status = 'pending' AND next_attempt_at <= now()
+		ORDER BY next_attempt_at
+		LIMIT 50`)
+	if err != nil {
+		d.log.Error("drain query", "err", err)
+		return
+	}
+	type row struct {
+		id, eventKey, channel, userID, addr string
+		payload                             []byte
+		attempt, maxAttempts                int
+	}
+	var work []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.eventKey, &r.channel, &r.userID, &r.addr,
+			&r.payload, &r.attempt, &r.maxAttempts); err != nil {
+			rows.Close()
+			d.log.Error("drain scan", "err", err)
+			return
+		}
+		work = append(work, r)
+	}
+	rows.Close()
+
+	for _, w := range work {
+		var payload map[string]any
+		_ = json.Unmarshal(w.payload, &payload)
+		subject, body := defaultMessage(w.eventKey, payload)
+		linkDoctype := strOrEmpty(payload["doctype"])
+		linkDocID := strOrEmpty(payload["document_id"])
+
+		var deliverErr error
+		switch w.channel {
+		case "in_app":
+			deliverErr = d.deliverInApp(ctx, w.userID, subject, body, linkDoctype, linkDocID)
+		case "email":
+			if d.email == nil {
+				deliverErr = errNoTransport("email")
+			} else {
+				vars := payload
+				if vars == nil {
+					vars = map[string]any{}
+				}
+				vars["RecipientEmail"] = w.addr
+				_, deliverErr = d.email.SendTemplated(ctx, w.eventKey, w.addr, vars)
+			}
+		case "whatsapp":
+			deliverErr = errNoTransport("whatsapp")
+		}
+
+		if deliverErr == nil {
+			if _, err := d.db.Exec(ctx, `
+				UPDATE notification_dispatch
+				SET status = 'sent', attempt = attempt + 1, delivered_at = now(), last_error = ''
+				WHERE id = $1`, w.id); err != nil {
+				d.log.Error("mark sent", "id", w.id, "err", err)
+			}
+			continue
+		}
+
+		nextAttempt := w.attempt + 1
+		if nextAttempt >= w.maxAttempts {
+			if _, err := d.db.Exec(ctx, `
+				UPDATE notification_dispatch
+				SET status = 'permanently_failed', attempt = $2, last_error = $3
+				WHERE id = $1`, w.id, nextAttempt, deliverErr.Error()); err != nil {
+				d.log.Error("mark perm fail", "id", w.id, "err", err)
+			}
+			continue
+		}
+		// Exponential backoff: 1m, 2m, 4m, 8m, 16m (capped).
+		backoff := time.Duration(1<<min(nextAttempt-1, 4)) * time.Minute
+		if _, err := d.db.Exec(ctx, `
+			UPDATE notification_dispatch
+			SET attempt = $2, last_error = $3, next_attempt_at = now() + $4
+			WHERE id = $1`, w.id, nextAttempt, deliverErr.Error(), backoff); err != nil {
+			d.log.Error("mark retry", "id", w.id, "err", err)
+		}
+	}
+}
+
+type errNoTransport string
+
+func (e errNoTransport) Error() string {
+	return "no transport wired for channel " + string(e)
+}
+
 
 // ---- internals ----
 

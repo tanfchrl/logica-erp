@@ -54,6 +54,65 @@ type Engine struct {
 
 func NewEngine(db *dbx.DB) *Engine { return &Engine{db: db} }
 
+// CheckSubmitRole gates submit by role when a workflow exists for the doctype.
+// It looks up the workflow's "submit" transition out of the initial state and
+// verifies the caller holds the transition's allowed_role_id. If no workflow
+// exists for the doctype, returns nil (no-op).
+//
+// This is the minimum-viable wire-in for the workflow runtime — it doesn't yet
+// drive state transitions on the document (that needs a per-doctype `state`
+// column). Use this in service.Submit() AFTER the existing approval gate.
+func (e *Engine) CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return errors.New("workflow: unauthenticated")
+	}
+	if p.IsSystem {
+		return nil
+	}
+	var (
+		wfID    string
+		initial string
+	)
+	err := tx.QueryRow(ctx, `
+		SELECT w.id, coalesce(s.name,'')
+		FROM workflow w
+		LEFT JOIN workflow_state s ON s.workflow_id = w.id AND s.is_initial = true
+		WHERE w.doctype = $1 AND w.is_active = true
+		LIMIT 1`, doctype).Scan(&wfID, &initial)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil // no workflow for this doctype → permissive
+	}
+	if err != nil {
+		return err
+	}
+	if initial == "" {
+		return nil // workflow defined but missing initial state — don't block submit
+	}
+	// Find a transition with action='submit' from initial state. If absent,
+	// the workflow doesn't restrict who can submit (only its other actions
+	// are role-gated).
+	var allowedRoleID *string
+	err = tx.QueryRow(ctx, `
+		SELECT allowed_role_id
+		FROM workflow_transition
+		WHERE workflow_id = $1 AND from_state = $2 AND action = 'submit'`,
+		wfID, initial).Scan(&allowedRoleID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if allowedRoleID == nil || *allowedRoleID == "" {
+		return nil
+	}
+	if !contains(p.Roles, *allowedRoleID) {
+		return fmt.Errorf("%w: workflow requires role %s to submit %s", ErrRoleNotPermitted, *allowedRoleID, doctype)
+	}
+	return nil
+}
+
 // Apply validates and returns the new state name. Inserts an audit row using the supplied tx.
 func (e *Engine) Apply(ctx context.Context, tx pgx.Tx, doctype, currentState, action string) (newState string, docStatus int16, err error) {
 	p := auth.FromContext(ctx)

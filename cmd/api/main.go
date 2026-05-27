@@ -124,16 +124,29 @@ func main() {
 	connectorSvc := connectors.NewService(db)
 	notifRuleSvc := notifrules.NewService(db)
 	notifier := notifrules.NewDispatcher(db, emailSvc)
+	// Background worker drains notification_dispatch with exponential backoff.
+	go notifier.RunWorker(ctx, 10*time.Second)
 	sysHealthSvc := sysinsights.NewService(db)
 	payrollSetSvc := payrollconfig.NewService(db)
 	approvalEng := workflow.NewApprovalEngine(db)
 	approvalEng.Notifier = notifier
+	workflowEng := workflow.NewEngine(db)
 	siSvc.Approvals = approvalEng
 	piSvc.Approvals = approvalEng
 	peSvc.Approvals = approvalEng
 	jeSvc.Approvals = approvalEng
+	siSvc.Workflow = workflowEng
+	piSvc.Workflow = workflowEng
+	peSvc.Workflow = workflowEng
+	jeSvc.Workflow = workflowEng
 	siSvc.Notifier = notifier
 	peSvc.Notifier = notifier
+	pcvSvc.Approvals = approvalEng
+	payrollSvc.Approvals = approvalEng
+	bomSvc.Approvals = approvalEng
+	woSvc.Approvals = approvalEng
+	steSvc.Approvals = approvalEng
+	assetSvc.Approvals = approvalEng
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
@@ -201,7 +214,7 @@ func main() {
 		item.Register(hapi, &item.Handler{Service: itemSvc, Perm: perm})
 		taxtemplate.Register(hapi, &taxtemplate.Handler{Service: taxSvc, Perm: perm})
 		salesinvoice.Register(hapi, &salesinvoice.Handler{Service: siSvc, Perm: perm, DB: db, PrintRenderer: printRenderer, PrintAdmin: printAdminSvc})
-		purchaseinvoice.Register(hapi, &purchaseinvoice.Handler{Service: piSvc, Perm: perm})
+		purchaseinvoice.Register(hapi, &purchaseinvoice.Handler{Service: piSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
 		paymententry.Register(hapi, &paymententry.Handler{Service: peSvc, Perm: perm})
 		reports.Register(hapi, &reports.Handler{Service: reportSvc, Perm: perm})
 		periodclosing.Register(hapi, &periodclosing.Handler{Service: pcvSvc, Perm: perm})

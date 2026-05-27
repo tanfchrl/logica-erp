@@ -52,7 +52,9 @@ type EventDef struct {
 // ---- SMTP config ----
 
 // SMTPConfig is the API shape. Password is omitted on every read.
+// CompanyID empty = workspace-wide fallback config.
 type SMTPConfig struct {
+	CompanyID    string    `json:"company_id,omitempty"`
 	Host         string    `json:"host"`
 	Port         int       `json:"port"`
 	Username     string    `json:"username,omitempty"`
@@ -66,6 +68,7 @@ type SMTPConfig struct {
 }
 
 type SMTPSaveInput struct {
+	CompanyID    string  `json:"company_id,omitempty" doc:"omit for workspace-wide fallback config"`
 	Host         string  `json:"host"`
 	Port         int     `json:"port,omitempty"   doc:"defaults to 587"`
 	Username     string  `json:"username,omitempty"`
@@ -116,18 +119,24 @@ type Service struct{ db *dbx.DB }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
-func (s *Service) GetConfig(ctx context.Context) (*SMTPConfig, error) {
+// GetConfig returns the most-specific config for `companyID`. If a company-
+// scoped row exists it's returned; otherwise the workspace-wide (NULL) row;
+// otherwise an empty placeholder so the UI can render the form.
+func (s *Service) GetConfig(ctx context.Context, companyID string) (*SMTPConfig, error) {
 	var c SMTPConfig
 	var passwordSet bool
 	err := s.db.QueryRow(ctx, `
-		SELECT host, port, username, (password <> ''), use_tls,
+		SELECT coalesce(company_id,''), host, port, username, (password <> ''), use_tls,
 		       from_email, from_name, reply_to_email, is_enabled, updated_at
-		FROM smtp_config WHERE id = 'smtp_singleton'`).
-		Scan(&c.Host, &c.Port, &c.Username, &passwordSet, &c.UseTLS,
+		FROM smtp_config
+		WHERE company_id = $1 OR company_id IS NULL
+		ORDER BY (company_id IS NULL) ASC
+		LIMIT 1`, companyID).
+		Scan(&c.CompanyID, &c.Host, &c.Port, &c.Username, &passwordSet, &c.UseTLS,
 			&c.FromEmail, &c.FromName, &c.ReplyToEmail, &c.IsEnabled, &c.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Return an empty config so the UI can show the form.
-		return &SMTPConfig{Port: 587, UseTLS: true}, nil
+		return &SMTPConfig{CompanyID: companyID, Port: 587, UseTLS: true}, nil
 	}
 	if err != nil {
 		return nil, err
@@ -162,44 +171,61 @@ func (s *Service) SaveConfig(ctx context.Context, in SMTPSaveInput) (*SMTPConfig
 	}
 
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
-		// Pull current password if input didn't supply one.
-		var currentPass string
-		_ = tx.QueryRow(ctx, `SELECT password FROM smtp_config WHERE id='smtp_singleton'`).Scan(&currentPass)
+		// Existing row for this scope? Pull id + password to support partial
+		// updates (omit password = keep current).
+		var (
+			existingID   string
+			currentPass  string
+		)
+		_ = tx.QueryRow(ctx, `
+			SELECT id, password FROM smtp_config
+			WHERE coalesce(company_id,'') = $1`, in.CompanyID).Scan(&existingID, &currentPass)
 		pass := currentPass
 		if in.Password != nil {
 			pass = *in.Password
 		}
+
+		if existingID != "" {
+			_, err := tx.Exec(ctx, `
+				UPDATE smtp_config SET host = $2, port = $3, username = $4, password = $5,
+				  use_tls = $6, from_email = $7, from_name = $8, reply_to_email = $9,
+				  is_enabled = $10, updated_at = now(), updated_by = $11
+				WHERE id = $1`,
+				existingID, in.Host, in.Port, in.Username, pass, useTLS,
+				in.FromEmail, in.FromName, in.ReplyToEmail, enabled, p.UserID)
+			return err
+		}
+
+		newID := "smtp_singleton"
+		if in.CompanyID != "" {
+			newID = dbx.NewIDWithPrefix("smtp")
+		}
 		_, err := tx.Exec(ctx, `
-			INSERT INTO smtp_config (id, host, port, username, password, use_tls,
+			INSERT INTO smtp_config (id, company_id, host, port, username, password, use_tls,
 			                         from_email, from_name, reply_to_email, is_enabled, updated_at, updated_by)
-			VALUES ('smtp_singleton',$1,$2,$3,$4,$5,$6,$7,$8,$9, now(), $10)
-			ON CONFLICT (id) DO UPDATE SET
-			  host = EXCLUDED.host, port = EXCLUDED.port, username = EXCLUDED.username,
-			  password = EXCLUDED.password, use_tls = EXCLUDED.use_tls,
-			  from_email = EXCLUDED.from_email, from_name = EXCLUDED.from_name,
-			  reply_to_email = EXCLUDED.reply_to_email, is_enabled = EXCLUDED.is_enabled,
-			  updated_at = now(), updated_by = EXCLUDED.updated_by`,
-			in.Host, in.Port, in.Username, pass, useTLS,
+			VALUES ($1, NULLIF($2,''), $3,$4,$5,$6,$7,$8,$9,$10,$11, now(), $12)`,
+			newID, in.CompanyID, in.Host, in.Port, in.Username, pass, useTLS,
 			in.FromEmail, in.FromName, in.ReplyToEmail, enabled, p.UserID)
 		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return s.GetConfig(ctx)
+	return s.GetConfig(ctx, in.CompanyID)
 }
 
-// SendTest sends a fixed body to the given address using the saved config.
-// Never persists the test in email_log.
+// SendTest sends a fixed body to the given address using the saved config
+// for the active company (or workspace-wide fallback). Not logged.
 func (s *Service) SendTest(ctx context.Context, to string) error {
-	cfg, err := s.GetConfig(ctx)
+	companyID := auth.CompanyFromContext(ctx)
+	cfg, err := s.GetConfig(ctx, companyID)
 	if err != nil {
 		return err
 	}
 	if cfg.Host == "" {
 		return errors.New("smtp: not configured")
 	}
-	pass, err := s.fetchPassword(ctx)
+	pass, err := s.fetchPassword(ctx, cfg.CompanyID)
 	if err != nil {
 		return err
 	}
@@ -210,8 +236,13 @@ func (s *Service) SendTest(ctx context.Context, to string) error {
 
 // SendTemplated renders the template for an event and delivers it to `to`,
 // persisting an entry in email_log. Returns the log id.
+//
+// The company under which to look up SMTP config is taken from the vars
+// payload's "company_id" key (the dispatcher fills it from event payloads).
+// Falls back to the workspace-wide config if no company-specific one exists.
 func (s *Service) SendTemplated(ctx context.Context, eventKey, to string, vars map[string]any) (string, error) {
-	cfg, err := s.GetConfig(ctx)
+	companyID, _ := vars["company_id"].(string)
+	cfg, err := s.GetConfig(ctx, companyID)
 	if err != nil {
 		return "", err
 	}
@@ -226,7 +257,7 @@ func (s *Service) SendTemplated(ctx context.Context, eventKey, to string, vars m
 	if err != nil {
 		return "", err
 	}
-	pass, err := s.fetchPassword(ctx)
+	pass, err := s.fetchPassword(ctx, cfg.CompanyID)
 	if err != nil {
 		return "", err
 	}
@@ -249,9 +280,13 @@ func (s *Service) SendTemplated(ctx context.Context, eventKey, to string, vars m
 	return logID, nil
 }
 
-func (s *Service) fetchPassword(ctx context.Context) (string, error) {
+func (s *Service) fetchPassword(ctx context.Context, companyID string) (string, error) {
 	var p string
-	err := s.db.QueryRow(ctx, `SELECT password FROM smtp_config WHERE id='smtp_singleton'`).Scan(&p)
+	err := s.db.QueryRow(ctx, `
+		SELECT password FROM smtp_config
+		WHERE company_id = $1 OR company_id IS NULL
+		ORDER BY (company_id IS NULL) ASC
+		LIMIT 1`, companyID).Scan(&p)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -454,13 +489,13 @@ func Register(api huma.API, h *Handler) {
 	// SMTP config
 	huma.Register(api, huma.Operation{
 		OperationID: "get-smtp-config", Method: http.MethodGet,
-		Path: "/admin/smtp", Summary: "Get SMTP configuration",
+		Path: "/admin/smtp", Summary: "Get SMTP configuration (optionally for a company)",
 		Tags: []string{"Admin / Email"},
-	}, func(ctx context.Context, _ *struct{}) (*smtpItemOut, error) {
+	}, func(ctx context.Context, in *smtpGetIn) (*smtpItemOut, error) {
 		if err := h.Perm.Check(ctx, DoctypeSMTP, permission.ActionRead); err != nil {
 			return nil, httpx.MapError(err)
 		}
-		c, err := h.Service.GetConfig(ctx)
+		c, err := h.Service.GetConfig(ctx, in.CompanyID)
 		if err != nil {
 			return nil, httpx.MapError(err)
 		}
@@ -556,6 +591,9 @@ func Register(api huma.API, h *Handler) {
 
 type (
 	smtpItemOut struct{ Body SMTPConfig }
+	smtpGetIn   struct {
+		CompanyID string `query:"company_id"`
+	}
 	smtpSaveIn  struct{ Body SMTPSaveInput }
 	smtpTestIn  struct {
 		Body struct {

@@ -92,7 +92,14 @@ type AssetCreateInput struct {
 	CostCenterID                       string `json:"cost_center_id,omitempty"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db        *dbx.DB
+	Approvals approvalChecker
+}
+
+type approvalChecker interface {
+	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -194,6 +201,13 @@ func (s *Service) Submit(ctx context.Context, id string) (*Asset, error) {
 		}
 		if a.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Approvals != nil {
+			cost, _ := a.GrossPurchaseAmount.Float64()
+			if err := s.Approvals.CheckSubmit(ctx, tx, "asset", a.ID, a.Name, a.CompanyID,
+				map[string]any{"gross_purchase_amount": cost, "amount": cost}); err != nil {
+				return err
+			}
 		}
 
 		// Generate schedule.

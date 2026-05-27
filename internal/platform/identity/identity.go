@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net"
 	"strings"
 	"time"
 
@@ -63,17 +64,19 @@ var KnownDoctypes = []string{
 // ===========================================================================
 
 type User struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	FullName  string    `json:"full_name,omitempty"`
-	Enabled   bool      `json:"enabled"`
-	Locale    string    `json:"locale,omitempty"`
-	TimeZone  string    `json:"time_zone,omitempty"`
-	IsSystem  bool      `json:"is_system"`
-	Roles     []string  `json:"roles"`
-	Companies []string  `json:"companies"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          string    `json:"id"`
+	Email       string    `json:"email"`
+	FullName    string    `json:"full_name,omitempty"`
+	Enabled     bool      `json:"enabled"`
+	Locale      string    `json:"locale,omitempty"`
+	TimeZone    string    `json:"time_zone,omitempty"`
+	IsSystem    bool      `json:"is_system"`
+	Roles       []string  `json:"roles"`
+	Companies   []string  `json:"companies"`
+	// IPAllowlist — CIDR blocks the user must log in from. Empty = no restriction.
+	IPAllowlist []string  `json:"ip_allowlist"`
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 type UserCreateInput struct {
@@ -85,10 +88,12 @@ type UserCreateInput struct {
 }
 
 type UserUpdateInput struct {
-	FullName *string `json:"full_name,omitempty"`
-	Enabled  *bool   `json:"enabled,omitempty"`
-	Locale   *string `json:"locale,omitempty"`
-	TimeZone *string `json:"time_zone,omitempty"`
+	FullName    *string  `json:"full_name,omitempty"`
+	Enabled     *bool    `json:"enabled,omitempty"`
+	Locale      *string  `json:"locale,omitempty"`
+	TimeZone    *string  `json:"time_zone,omitempty"`
+	// IPAllowlist replaces the existing value when supplied; pass [] to clear.
+	IPAllowlist *[]string `json:"ip_allowlist,omitempty"`
 }
 
 type PasswordInput struct {
@@ -145,17 +150,20 @@ func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
 // ---- Users ----
 
+// userSelect — common projection. ip_allowlist is rendered as text[] using host()+masklen()
+// so the API surfaces consistent "10.0.0.0/24" strings regardless of pgx driver version.
+const userSelect = `
+	SELECT u.id, u.email, u.full_name, u.enabled, u.locale, u.time_zone, u.is_system,
+	       coalesce(array_agg(DISTINCT ur.role_id)   FILTER (WHERE ur.role_id   IS NOT NULL), '{}'),
+	       coalesce(array_agg(DISTINCT uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), '{}'),
+	       coalesce(array(SELECT host(c) || '/' || masklen(c) FROM unnest(u.ip_allowlist) c), '{}'),
+	       u.created_at, u.updated_at
+	FROM users u
+	LEFT JOIN user_role    ur ON ur.user_id = u.id
+	LEFT JOIN user_company uc ON uc.user_id = u.id`
+
 func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := s.db.Query(ctx, `
-		SELECT u.id, u.email, u.full_name, u.enabled, u.locale, u.time_zone, u.is_system,
-		       coalesce(array_agg(DISTINCT ur.role_id)   FILTER (WHERE ur.role_id   IS NOT NULL), '{}'),
-		       coalesce(array_agg(DISTINCT uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), '{}'),
-		       u.created_at, u.updated_at
-		FROM users u
-		LEFT JOIN user_role    ur ON ur.user_id = u.id
-		LEFT JOIN user_company uc ON uc.user_id = u.id
-		GROUP BY u.id
-		ORDER BY u.created_at DESC`)
+	rows, err := s.db.Query(ctx, userSelect+` GROUP BY u.id ORDER BY u.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +172,7 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 	for rows.Next() {
 		var u User
 		if err := rows.Scan(&u.ID, &u.Email, &u.FullName, &u.Enabled, &u.Locale, &u.TimeZone, &u.IsSystem,
-			&u.Roles, &u.Companies, &u.CreatedAt, &u.UpdatedAt); err != nil {
+			&u.Roles, &u.Companies, &u.IPAllowlist, &u.CreatedAt, &u.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -174,18 +182,9 @@ func (s *Service) ListUsers(ctx context.Context) ([]User, error) {
 
 func (s *Service) GetUser(ctx context.Context, id string) (*User, error) {
 	var u User
-	err := s.db.QueryRow(ctx, `
-		SELECT u.id, u.email, u.full_name, u.enabled, u.locale, u.time_zone, u.is_system,
-		       coalesce(array_agg(DISTINCT ur.role_id)   FILTER (WHERE ur.role_id   IS NOT NULL), '{}'),
-		       coalesce(array_agg(DISTINCT uc.company_id) FILTER (WHERE uc.company_id IS NOT NULL), '{}'),
-		       u.created_at, u.updated_at
-		FROM users u
-		LEFT JOIN user_role    ur ON ur.user_id = u.id
-		LEFT JOIN user_company uc ON uc.user_id = u.id
-		WHERE u.id = $1
-		GROUP BY u.id`, id).
+	err := s.db.QueryRow(ctx, userSelect+` WHERE u.id = $1 GROUP BY u.id`, id).
 		Scan(&u.ID, &u.Email, &u.FullName, &u.Enabled, &u.Locale, &u.TimeZone, &u.IsSystem,
-			&u.Roles, &u.Companies, &u.CreatedAt, &u.UpdatedAt)
+			&u.Roles, &u.Companies, &u.IPAllowlist, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("user %s: not found", id)
 	}
@@ -256,15 +255,40 @@ func (s *Service) UpdateUser(ctx context.Context, id string, in UserUpdateInput)
 	if in.Locale != nil   { locale = *in.Locale }
 	if in.TimeZone != nil { tz = *in.TimeZone }
 
+	// Validate and parse incoming allowlist (if supplied) — reject early on bad CIDRs.
+	var allowlist []string
+	updateAllowlist := in.IPAllowlist != nil
+	if updateAllowlist {
+		for _, c := range *in.IPAllowlist {
+			c = strings.TrimSpace(c)
+			if c == "" {
+				continue
+			}
+			if _, _, err := net.ParseCIDR(c); err != nil {
+				return nil, fmt.Errorf("ip_allowlist: %q is not a valid CIDR (use e.g. 203.0.113.0/24 or 198.51.100.42/32)", c)
+			}
+			allowlist = append(allowlist, c)
+		}
+	}
+
 	err = s.db.Tx(ctx, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			UPDATE users SET full_name = $2, enabled = $3, locale = $4, time_zone = $5, updated_by = $6
-			WHERE id = $1`, id, fullName, enabled, locale, tz, p.UserID)
-		if err != nil {
+			WHERE id = $1`, id, fullName, enabled, locale, tz, p.UserID); err != nil {
 			return err
 		}
+		if updateAllowlist {
+			if _, err := tx.Exec(ctx,
+				`UPDATE users SET ip_allowlist = $2::cidr[] WHERE id = $1`,
+				id, allowlist); err != nil {
+				return err
+			}
+		}
 		return audit.Record(ctx, tx, DoctypeUser, id, p.UserID, audit.ActionUpdate,
-			audit.Diff{Before: cur, After: map[string]any{"full_name": fullName, "enabled": enabled, "locale": locale, "time_zone": tz}})
+			audit.Diff{Before: cur, After: map[string]any{
+				"full_name": fullName, "enabled": enabled, "locale": locale, "time_zone": tz,
+				"ip_allowlist": allowlist,
+			}})
 	})
 	if err != nil {
 		return nil, err

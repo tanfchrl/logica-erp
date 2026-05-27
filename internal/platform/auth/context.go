@@ -16,6 +16,20 @@ type Principal struct {
 	Roles     []string
 	Locale    string
 	IsSystem  bool
+	// Scopes restricts an API-token caller to a subset of actions. When nil
+	// or empty, the caller has unrestricted access (JWT principals always
+	// get nil; API tokens with scopes=["*"] also get nil). When set, the
+	// permission engine intersects role grants with these scopes.
+	//
+	// Scope vocabulary:
+	//   "*"                — full access (no restriction)
+	//   "read:*"           — any read on any doctype
+	//   "write:*"          — any mutate (write/create/delete/submit/cancel/amend)
+	//   "read:<doctype>"   — read on a specific doctype
+	//   "write:<doctype>"  — mutate on a specific doctype
+	//   "print:*"          — print any doctype
+	//   "export:*"         — export any doctype
+	Scopes []string
 }
 
 func WithPrincipal(ctx context.Context, p *Principal) context.Context {

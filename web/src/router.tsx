@@ -13,6 +13,7 @@ import { ListView } from './routes/_ListView';
 import { ModuleLanding } from './routes/ModuleLanding';
 import { ModuleStub } from './routes/ModuleStub';
 import { SalesInvoiceForm } from './routes/SalesInvoiceForm';
+import { PurchaseInvoiceForm } from './routes/PurchaseInvoiceForm';
 import { JournalEntryForm } from './routes/JournalEntryForm';
 import { ReportsPage } from './routes/Reports';
 import { CreateFormPage } from './routes/CreateFormPage';
@@ -46,6 +47,8 @@ const itemsRoute     = createRoute({ getParentRoute: () => appRoute, path: '/acc
 // Full forms
 const siNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/sales-invoices/new',   component: SalesInvoiceForm });
 const siEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/sales-invoices/$id',   component: SalesInvoiceForm });
+const piNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-invoices/new', component: PurchaseInvoiceForm });
+const piEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-invoices/$id', component: PurchaseInvoiceForm });
 const jeNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries/new',  component: JournalEntryForm });
 const jeEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries/$id',  component: JournalEntryForm });
 
@@ -55,9 +58,10 @@ const reportsKind  = createRoute({ getParentRoute: () => appRoute, path: '/accou
 
 // Auto-built doctype list routes (skip the ones with custom pages/forms).
 const SKIP_LIST = new Set([
-  '/accounting/items',           // ItemsPage
-  '/accounting/sales-invoices',  // (list registered separately so SI's `new` route doesn't collide)
-  '/accounting/journal-entries', // same as SI
+  '/accounting/items',              // ItemsPage
+  '/accounting/sales-invoices',     // (list registered separately so SI's `new` route doesn't collide)
+  '/accounting/purchase-invoices',  // PI bespoke form needs its own list registration too
+  '/accounting/journal-entries',    // same as SI
 ]);
 
 const doctypeListRoutes = Object.values(doctypes)
@@ -71,11 +75,12 @@ const doctypeListRoutes = Object.values(doctypes)
   );
 
 // SI + JE need their own list routes since we skipped them above.
-const siListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/sales-invoices',  component: () => <ListView config={doctypes.salesInvoices!} /> });
-const jeListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries', component: () => <ListView config={doctypes.journalEntries!} /> });
+const siListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/sales-invoices',    component: () => <ListView config={doctypes.salesInvoices!} /> });
+const piListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-invoices', component: () => <ListView config={doctypes.purchaseInvoices!} /> });
+const jeListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries',   component: () => <ListView config={doctypes.journalEntries!} /> });
 
 // Auto-built /new routes for every doctype that has a create schema and no bespoke form.
-const BESPOKE_NEW = new Set(['/accounting/sales-invoices', '/accounting/journal-entries']);
+const BESPOKE_NEW = new Set(['/accounting/sales-invoices', '/accounting/purchase-invoices', '/accounting/journal-entries']);
 
 const doctypeNewRoutes = Object.values(doctypes)
   .filter((dt) => !BESPOKE_NEW.has(`${dt.modulePath}/${dt.slug}`) && !!getCreateSchema(dt.modulePath, dt.slug))
@@ -114,6 +119,7 @@ const routeTree = rootRoute.addChildren([
     dashboardRoute,
     itemsRoute,
     siNewRoute, siEditRoute, siListRoute,
+    piNewRoute, piEditRoute, piListRoute,
     jeNewRoute, jeEditRoute, jeListRoute,
     reportsIndex, reportsKind,
     ...doctypeListRoutes,

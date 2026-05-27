@@ -155,6 +155,9 @@ type Service struct {
 	// Approvals is optional. When set, Submit() consults active approval_rules
 	// for this doctype + company; missing approvals block submit.
 	Approvals approvalChecker
+	// Workflow is optional. When set, Submit() consults the workflow definition
+	// (if one exists) to gate submit by the caller's role.
+	Workflow workflowGate
 	// Notifier is optional. When set, Submit() fires `invoice.issued` after
 	// successful commit so notifrules can route in-app + email notifications.
 	Notifier notifier
@@ -162,6 +165,10 @@ type Service struct {
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 type notifier interface {
@@ -507,6 +514,12 @@ func (s *Service) Submit(ctx context.Context, id string) (*SalesInvoice, error) 
 			return errors.New("sales_invoice: grand_total is zero, nothing to post")
 		}
 
+		// Workflow role gate (when a workflow exists for this doctype).
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "sales_invoice"); err != nil {
+				return err
+			}
+		}
 		// Approval gate.
 		if s.Approvals != nil {
 			gt, _ := si.GrandTotal.Float64()

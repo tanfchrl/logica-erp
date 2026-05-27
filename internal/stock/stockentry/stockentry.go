@@ -102,7 +102,14 @@ type StockEntryLineInput struct {
 	ExpenseAccountID  string `json:"expense_account_id,omitempty"`   // for material_issue, contra for material_receipt
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db        *dbx.DB
+	Approvals approvalChecker
+}
+
+type approvalChecker interface {
+	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -245,6 +252,22 @@ func (s *Service) Submit(ctx context.Context, id string) (*StockEntry, error) {
 		}
 		if se.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Approvals != nil {
+			outV, _ := se.TotalOutgoingValue.Float64()
+			inV, _  := se.TotalIncomingValue.Float64()
+			amount := outV
+			if inV > amount {
+				amount = inV
+			}
+			if err := s.Approvals.CheckSubmit(ctx, tx, "stock_entry", se.ID, se.Name, se.CompanyID,
+				map[string]any{
+					"total_outgoing_value": outV,
+					"total_incoming_value": inV,
+					"amount":               amount,
+				}); err != nil {
+				return err
+			}
 		}
 
 		postingDT := se.PostingDate
