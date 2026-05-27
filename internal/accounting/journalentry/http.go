@@ -6,6 +6,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/tandigital/logica-erp/internal/platform/auth"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
 )
@@ -16,6 +17,27 @@ type Handler struct {
 }
 
 func Register(api huma.API, h *Handler) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-journal-entries",
+		Method:      http.MethodGet,
+		Path:        "/accounting/journal-entries",
+		Summary:     "List journal entries",
+		Tags:        []string{"Accounting / Journal Entry"},
+	}, func(ctx context.Context, _ *struct{}) (*jeListOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		co := auth.CompanyFromContext(ctx)
+		if co == "" {
+			return nil, huma.NewError(http.StatusBadRequest, "X-Company-Id required")
+		}
+		ss, err := h.Service.List(ctx, co)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &jeListOut{Body: jeListBody{Items: ss}}, nil
+	})
+
 	huma.Register(api, huma.Operation{
 		OperationID:   "create-journal-entry",
 		Method:        http.MethodPost,
@@ -91,5 +113,9 @@ type (
 	jeCreateOut struct{ Body JournalEntry }
 	jeGetIn     struct {
 		ID string `path:"id"`
+	}
+	jeListOut  struct{ Body jeListBody }
+	jeListBody struct {
+		Items []JournalEntry `json:"items"`
 	}
 )

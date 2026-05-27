@@ -399,6 +399,32 @@ func (s *Service) Get(ctx context.Context, id string) (*WorkOrder, error) {
 	return out, err
 }
 
+func (s *Service) List(ctx context.Context, companyID string) ([]WorkOrder, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id FROM work_order WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	out := make([]WorkOrder, 0, len(ids))
+	for _, id := range ids {
+		w, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *w)
+	}
+	return out, nil
+}
+
 func load(ctx context.Context, tx pgx.Tx, id string) (*WorkOrder, error) {
 	var w WorkOrder
 	err := tx.QueryRow(ctx, `
@@ -466,6 +492,24 @@ type Handler struct {
 
 func Register(api huma.API, h *Handler) {
 	huma.Register(api, huma.Operation{
+		OperationID: "list-work-orders", Method: http.MethodGet,
+		Path: "/manufacturing/work-orders", Summary: "List work orders",
+		Tags: []string{"Manufacturing / Work Order"},
+	}, func(ctx context.Context, _ *struct{}) (*woListOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		co := auth.CompanyFromContext(ctx)
+		if co == "" {
+			return nil, huma.NewError(http.StatusBadRequest, "X-Company-Id required")
+		}
+		ws, err := h.Service.List(ctx, co)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &woListOut{Body: woListBody{Items: ws}}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "create-work-order", Method: http.MethodPost,
 		Path: "/manufacturing/work-orders", Summary: "Create a Work Order draft",
 		Tags: []string{"Manufacturing / Work Order"}, DefaultStatus: http.StatusCreated,
@@ -532,5 +576,9 @@ type (
 	woUpdateIn struct {
 		ID   string `path:"id"`
 		Body WorkOrderUpdateInput
+	}
+	woListOut  struct{ Body woListBody }
+	woListBody struct {
+		Items []WorkOrder `json:"items"`
 	}
 )

@@ -496,6 +496,32 @@ func (s *Service) Get(ctx context.Context, id string) (*Asset, error) {
 	return out, err
 }
 
+func (s *Service) List(ctx context.Context, companyID string) ([]Asset, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id FROM asset WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	out := make([]Asset, 0, len(ids))
+	for _, id := range ids {
+		a, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *a)
+	}
+	return out, nil
+}
+
 func load(ctx context.Context, tx pgx.Tx, id string) (*Asset, error) {
 	var (
 		a               Asset
@@ -572,6 +598,24 @@ type Handler struct {
 }
 
 func Register(api huma.API, h *Handler) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-assets", Method: http.MethodGet,
+		Path: "/assets/assets", Summary: "List assets",
+		Tags: []string{"Assets / Asset"},
+	}, func(ctx context.Context, _ *struct{}) (*assetListOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		co := auth.CompanyFromContext(ctx)
+		if co == "" {
+			return nil, huma.NewError(http.StatusBadRequest, "X-Company-Id required")
+		}
+		as, err := h.Service.List(ctx, co)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &assetListOut{Body: assetListBody{Items: as}}, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "create-asset", Method: http.MethodPost,
 		Path: "/assets/assets", Summary: "Create an Asset",
@@ -666,5 +710,9 @@ type (
 	assetUpdateIn struct {
 		ID   string `path:"id"`
 		Body AssetUpdateInput
+	}
+	assetListOut  struct{ Body assetListBody }
+	assetListBody struct {
+		Items []Asset `json:"items"`
 	}
 )

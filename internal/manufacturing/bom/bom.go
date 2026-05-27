@@ -324,6 +324,32 @@ func (s *Service) Get(ctx context.Context, id string) (*BOM, error) {
 	return out, err
 }
 
+func (s *Service) List(ctx context.Context, companyID string) ([]BOM, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id FROM bom WHERE company_id = $1 ORDER BY created_at DESC LIMIT 200`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	out := make([]BOM, 0, len(ids))
+	for _, id := range ids {
+		b, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *b)
+	}
+	return out, nil
+}
+
 func load(ctx context.Context, tx pgx.Tx, id string) (*BOM, error) {
 	var b BOM
 	err := tx.QueryRow(ctx, `
@@ -374,6 +400,24 @@ type Handler struct {
 }
 
 func Register(api huma.API, h *Handler) {
+	huma.Register(api, huma.Operation{
+		OperationID: "list-boms", Method: http.MethodGet,
+		Path: "/manufacturing/boms", Summary: "List BOMs",
+		Tags: []string{"Manufacturing / BOM"},
+	}, func(ctx context.Context, _ *struct{}) (*bomListOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		co := auth.CompanyFromContext(ctx)
+		if co == "" {
+			return nil, huma.NewError(http.StatusBadRequest, "X-Company-Id required")
+		}
+		bs, err := h.Service.List(ctx, co)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &bomListOut{Body: bomListBody{Items: bs}}, nil
+	})
 	huma.Register(api, huma.Operation{
 		OperationID: "create-bom", Method: http.MethodPost,
 		Path: "/manufacturing/boms", Summary: "Create a BOM draft",
@@ -441,5 +485,9 @@ type (
 	bomUpdateIn struct {
 		ID   string `path:"id"`
 		Body BOMUpdateInput
+	}
+	bomListOut  struct{ Body bomListBody }
+	bomListBody struct {
+		Items []BOM `json:"items"`
 	}
 )

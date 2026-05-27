@@ -342,6 +342,32 @@ func (s *Service) Get(ctx context.Context, id string) (*JournalEntry, error) {
 	return out, err
 }
 
+func (s *Service) List(ctx context.Context, companyID string) ([]JournalEntry, error) {
+	rows, err := s.db.Query(ctx, `
+		SELECT id FROM journal_entry WHERE company_id = $1 ORDER BY posting_date DESC, name DESC LIMIT 200`, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	out := make([]JournalEntry, 0, len(ids))
+	for _, id := range ids {
+		je, err := s.Get(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *je)
+	}
+	return out, nil
+}
+
 // --- helpers ---
 
 func parseLines(in []JournalEntryLineInput) ([]Line, decimal.Decimal, decimal.Decimal, error) {
