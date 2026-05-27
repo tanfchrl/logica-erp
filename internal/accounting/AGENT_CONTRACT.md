@@ -37,7 +37,7 @@ documents:
     display_name: "Sales Invoice"
     api_path: "/accounting/sales-invoices"
     tier0_tools: [list_with_filters, get_by_id]
-    tier1_tools: [create_draft]
+    tier1_tools: [create_draft, create_draft_credit_note_from_invoice]
     tier2_tools: []
   - name: purchase_invoice
     display_name: "Purchase Invoice"
@@ -55,7 +55,7 @@ documents:
     display_name: "Payment Entry"
     api_path: "/accounting/payment-entries"
     tier0_tools: [list_with_filters, get_by_id]
-    tier1_tools: [create_draft]
+    tier1_tools: [create_draft, create_draft_payment_for_invoice]
     tier2_tools: []
 system_context: |
   The Accounting module is the deterministic core of Logica ERP and posts to

@@ -285,7 +285,11 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 					// Tier-1: agent-authored drafts get a row in the approval
 					// queue + a `proposal` audit event so the human can find
 					// them later from the dashboard or the recent-drafts surface.
-					if tc.Function.Name == "create_draft" {
+					// All tools whose result carries an id/name/doctype are
+					// treated as draft creations — covers create_draft plus the
+					// composed Tier-1 tools (create_draft_payment_for_invoice,
+					// create_draft_credit_note_from_invoice).
+					if isDraftCreator(tc.Function.Name) {
 						maybeEnqueueDraft(ctx, apvStore, rec, p.UserID, co, sess.ID, turn, in.Body.Message, result)
 					}
 					resultBytes, _ := json.Marshal(result)
@@ -325,6 +329,18 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 			Turn:      turn,
 		}}, nil
 	})
+}
+
+// isDraftCreator returns true for tool names that, on success, produce a
+// new doctype=docstatus=0 record. The approval-queue enqueuer keys on this.
+func isDraftCreator(name string) bool {
+	switch name {
+	case "create_draft",
+		"create_draft_payment_for_invoice",
+		"create_draft_credit_note_from_invoice":
+		return true
+	}
+	return false
 }
 
 // maybeEnqueueDraft writes a row into agent_approval_queue when a
@@ -382,10 +398,15 @@ func runOneToolCall(ctx context.Context, reg *tools.Registry, gate *policy.Gate,
 		return map[string]any{"error": "unknown tool: " + tc.Function.Name}
 	}
 	// Doctype, if the args carry one, drives policy. Tools that don't
-	// involve a doctype (reports, search) skip the gate.
+	// involve a doctype (reports, search) skip the gate. Composed tools
+	// declare TargetDoctype explicitly so they don't have to leak the
+	// target into LLM-visible args.
 	var argsObj map[string]any
 	_ = json.Unmarshal([]byte(tc.Function.Arguments), &argsObj)
-	doctype, _ := argsObj["doctype"].(string)
+	doctype := t.TargetDoctype
+	if doctype == "" {
+		doctype, _ = argsObj["doctype"].(string)
+	}
 	if doctype != "" {
 		// Resolve tool tier via gate. The gate's per-doctype tier list lives
 		// in AGENT_CONTRACT.md.

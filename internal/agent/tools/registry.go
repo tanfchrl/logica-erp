@@ -35,6 +35,11 @@ type Tool struct {
 	// JSONSchema is the parameters block sent to the model. Must match
 	// OpenAI function-calling shape: type=object, properties, required.
 	JSONSchema map[string]any
+	// TargetDoctype, when non-empty, is the doctype the policy gate keys
+	// on for this tool — overrides any `doctype` field read from runtime
+	// args. Composed tools (create_draft_payment_for_invoice, etc.) use
+	// this to declare their write target without exposing it to the LLM.
+	TargetDoctype string
 	// Run executes the tool. erpcc carries the user's JWT + company id.
 	// args is the raw arguments JSON from the LLM tool_call. Returns a
 	// JSON-serialisable result (string, map, slice, etc.) or an error.
@@ -182,6 +187,39 @@ func (r *Registry) registerBuiltins() {
 			required("doctype", "payload"),
 		),
 		Run: r.runCreateDraft,
+	})
+
+	// Composed Tier-1 tools — higher-level than create_draft because they
+	// fetch the source document, derive the payload, and POST in one step.
+	// Closes spec §5 use cases for "buat X dari Y" prompts.
+	r.add(Tool{
+		Name: "create_draft_payment_for_invoice",
+		Description: "Given a sales-invoice or purchase-invoice id, draft a Payment Entry that settles the invoice's outstanding amount. " +
+			"Returns the new draft id. Tier-1.",
+		Tier:          policy.Tier1,
+		TargetDoctype: "payment_entry",
+		JSONSchema: schemaObject(
+			schemaProp("invoice_id", "string", "ID of the sales_invoice (si_...) or purchase_invoice (pi_...) to settle"),
+			schemaProp("paid_from_account_id", "string", "Account paying (Bank/Kas for receipts; AP for payments)"),
+			schemaProp("paid_to_account_id", "string", "Account receiving (AR for receipts; Bank/Kas for payments)"),
+			schemaProp("paid_amount", "string", "Optional — defaults to the invoice's outstanding_amount"),
+			required("invoice_id", "paid_from_account_id", "paid_to_account_id"),
+		),
+		Run: r.runCreateDraftPaymentForInvoice,
+	})
+
+	r.add(Tool{
+		Name: "create_draft_credit_note_from_invoice",
+		Description: "Given a submitted sales_invoice id, draft a credit note (is_return=true SI) that reverses its items. " +
+			"Useful for refunds and returns. Tier-1.",
+		Tier:          policy.Tier1,
+		TargetDoctype: "sales_invoice",
+		JSONSchema: schemaObject(
+			schemaProp("sales_invoice_id", "string", "ID of the source sales invoice"),
+			schemaProp("reason", "string", "Optional free-text note that becomes the new SI's remarks"),
+			required("sales_invoice_id"),
+		),
+		Run: r.runCreateDraftCreditNoteFromInvoice,
 	})
 }
 
@@ -344,6 +382,163 @@ func (r *Registry) runCreateDraft(ctx context.Context, cc erpclient.CallContext,
 		"path":    doc.APIPath,
 	}
 	return pick, nil
+}
+
+// runCreateDraftPaymentForInvoice composes a Payment Entry from a SI or PI.
+// Choosing payment_type, paid_from/to defaults, and the references[] entry
+// are mechanical given the source document — exactly the kind of work the
+// generic create_draft would force the model to figure out from scratch.
+func (r *Registry) runCreateDraftPaymentForInvoice(ctx context.Context, cc erpclient.CallContext, args json.RawMessage) (any, error) {
+	var a struct {
+		InvoiceID          string `json:"invoice_id"`
+		PaidFromAccountID  string `json:"paid_from_account_id"`
+		PaidToAccountID    string `json:"paid_to_account_id"`
+		PaidAmount         string `json:"paid_amount"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.InvoiceID == "" || a.PaidFromAccountID == "" || a.PaidToAccountID == "" {
+		return nil, errors.New("invoice_id, paid_from_account_id, paid_to_account_id required")
+	}
+
+	// Resolve source-doctype + endpoint from the id prefix. We don't lean on
+	// the contract registry here because the operation is intrinsic to the
+	// id shape (si_... / pi_...) and registry lookup adds nothing.
+	var (
+		srcPath      string
+		paymentType  string
+		partyType    string
+		refDoctype   string
+	)
+	switch {
+	case strings.HasPrefix(a.InvoiceID, "si_"):
+		srcPath, paymentType, partyType, refDoctype = "/accounting/sales-invoices", "receive", "customer", "sales_invoice"
+	case strings.HasPrefix(a.InvoiceID, "pi_"):
+		srcPath, paymentType, partyType, refDoctype = "/accounting/purchase-invoices", "pay", "supplier", "purchase_invoice"
+	default:
+		return nil, fmt.Errorf("invoice_id %q must start with si_ or pi_", a.InvoiceID)
+	}
+
+	var src map[string]any
+	if err := r.erp.Do(ctx, cc, "GET", srcPath+"/"+a.InvoiceID, nil, &src); err != nil {
+		return nil, fmt.Errorf("fetch source invoice: %w", err)
+	}
+
+	outstanding, _ := src["outstanding_amount"].(string)
+	if a.PaidAmount == "" {
+		a.PaidAmount = outstanding
+	}
+	postingDate, _ := src["posting_date"].(string)
+	if len(postingDate) >= 10 {
+		postingDate = postingDate[:10] // strip the trailing T00:00:00Z
+	}
+
+	partyIDField := "customer_id"
+	if partyType == "supplier" {
+		partyIDField = "supplier_id"
+	}
+	partyID, _ := src[partyIDField].(string)
+
+	payload := map[string]any{
+		"payment_type":          paymentType,
+		"party_type":            partyType,
+		"party_id":              partyID,
+		"posting_date":          postingDate,
+		"paid_from_account_id":  a.PaidFromAccountID,
+		"paid_to_account_id":    a.PaidToAccountID,
+		"paid_amount":           a.PaidAmount,
+		"references": []map[string]any{{
+			"reference_doctype": refDoctype,
+			"reference_id":      a.InvoiceID,
+			"allocated_amount":  a.PaidAmount,
+		}},
+	}
+
+	var out map[string]any
+	if err := r.erp.Do(ctx, cc, "POST", "/accounting/payment-entries", payload, &out); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id":              out["id"],
+		"name":            out["name"],
+		"doctype":         "payment_entry",
+		"path":            "/accounting/payment-entries",
+		"source_invoice":  a.InvoiceID,
+		"settles_amount":  a.PaidAmount,
+	}, nil
+}
+
+// runCreateDraftCreditNoteFromInvoice mirrors a submitted SI as a return.
+// Lines come from the source; amounts go through unchanged — the
+// is_return + return_against fields are what flip the GL impact.
+func (r *Registry) runCreateDraftCreditNoteFromInvoice(ctx context.Context, cc erpclient.CallContext, args json.RawMessage) (any, error) {
+	var a struct {
+		SalesInvoiceID string `json:"sales_invoice_id"`
+		Reason         string `json:"reason"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return nil, err
+	}
+	if a.SalesInvoiceID == "" {
+		return nil, errors.New("sales_invoice_id required")
+	}
+	if !strings.HasPrefix(a.SalesInvoiceID, "si_") {
+		return nil, fmt.Errorf("sales_invoice_id %q must start with si_", a.SalesInvoiceID)
+	}
+
+	var src map[string]any
+	if err := r.erp.Do(ctx, cc, "GET", "/accounting/sales-invoices/"+a.SalesInvoiceID, nil, &src); err != nil {
+		return nil, fmt.Errorf("fetch source invoice: %w", err)
+	}
+
+	srcItems, _ := src["items"].([]any)
+	lines := make([]map[string]any, 0, len(srcItems))
+	for _, it := range srcItems {
+		m, _ := it.(map[string]any)
+		if m == nil {
+			continue
+		}
+		lines = append(lines, map[string]any{
+			"item_id":             m["item_id"],
+			"item_code":           m["item_code"],
+			"item_name":           m["item_name"],
+			"qty":                 m["qty"],
+			"rate":                m["rate"],
+			"uom":                 m["uom"],
+			"income_account_id":   m["income_account_id"],
+			"description":         m["description"],
+		})
+	}
+
+	postingDate, _ := src["posting_date"].(string)
+	if len(postingDate) >= 10 {
+		postingDate = postingDate[:10]
+	}
+
+	payload := map[string]any{
+		"customer_id":           src["customer_id"],
+		"posting_date":          postingDate,
+		"due_date":              postingDate, // credit note settles same-day by convention
+		"receivable_account_id": src["receivable_account_id"],
+		"tax_template_id":       src["tax_template_id"],
+		"is_return":             true,
+		"return_against":        a.SalesInvoiceID,
+		"items":                 lines,
+		"remarks":               a.Reason,
+	}
+
+	var out map[string]any
+	if err := r.erp.Do(ctx, cc, "POST", "/accounting/sales-invoices", payload, &out); err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"id":                out["id"],
+		"name":              out["name"],
+		"doctype":           "sales_invoice",
+		"path":              "/accounting/sales-invoices",
+		"return_against":    a.SalesInvoiceID,
+	}, nil
 }
 
 func (r *Registry) runSearch(ctx context.Context, cc erpclient.CallContext, args json.RawMessage) (any, error) {
