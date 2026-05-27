@@ -20,10 +20,13 @@ interface PaletteItem {
   icon: React.ComponentType<{ className?: string }>;
   onSelect: () => void;
   keywords?: string;
+  /** Violet-tinted "AI action" styling — distinguishes LLM ops from deterministic ones. */
+  aiAccent?: boolean;
 }
 
 export function CommandPalette() {
   const { paletteOpen, setPaletteOpen, theme, toggleTheme } = useUI();
+  const openCopilotWith = useUI((s) => s.openCopilotWith);
   const navigate = useNavigate();
 
   // ⌘K / Ctrl+K toggle anywhere.
@@ -40,6 +43,7 @@ export function CommandPalette() {
 
   const close = () => setPaletteOpen(false);
   const go = (to: string) => () => { close(); void navigate({ to }); };
+  const ai = (prompt: string) => () => { close(); openCopilotWith(prompt); };
 
   const primaryActions: PaletteItem[] = [
     { id: 'new-si', label: 'New Sales Invoice', icon: Receipt, shortcut: 'N S', onSelect: go('/accounting/sales-invoices?new=1'), keywords: 'invoice billing' },
@@ -63,6 +67,37 @@ export function CommandPalette() {
     { id: 'go-reports',      label: 'Go to Reports',      icon: BarChart3,     onSelect: go('/accounting/reports') },
     { id: 'go-settings',     label: 'Open Settings',      icon: Settings,      onSelect: go('/settings') },
     { id: 'go-appearance',   label: 'Appearance settings',icon: Sparkles,      onSelect: go('/settings') },
+  ];
+
+  // "Tindakan AI" — items that prompt the Copilot instead of navigating.
+  // Visually distinct (violet tint via PaletteItem.aiAccent so the user
+  // never confuses an LLM action with a deterministic one).
+  const aiActions: PaletteItem[] = [
+    { id: 'ai-ar-aging',
+      label: 'AR aging bulan ini',
+      keywords: 'ai copilot piutang aging receivables',
+      icon: Sparkles, aiAccent: true,
+      onSelect: ai('Tampilkan AR aging untuk bulan ini.') },
+    { id: 'ai-overdue-si',
+      label: 'Sales Invoice yang overdue',
+      keywords: 'ai copilot overdue invoice',
+      icon: Sparkles, aiAccent: true,
+      onSelect: ai('Sales Invoice mana yang overdue lebih dari 30 hari?') },
+    { id: 'ai-cash-balance',
+      label: 'Kas + bank hari ini',
+      keywords: 'ai copilot saldo kas bank cash',
+      icon: Sparkles, aiAccent: true,
+      onSelect: ai('Berapa saldo Kas dan Bank saat ini?') },
+    { id: 'ai-drafts',
+      label: 'Draft yang belum di-submit',
+      keywords: 'ai copilot drafts pending',
+      icon: Sparkles, aiAccent: true,
+      onSelect: ai('Tampilkan semua draft yang belum di-submit lebih dari 3 hari.') },
+    { id: 'ai-open',
+      label: 'Buka Copilot…',
+      keywords: 'ai copilot assistant chat tanya',
+      icon: Sparkles, aiAccent: true,
+      onSelect: ai('') },
   ];
 
   const utilities: PaletteItem[] = [
@@ -127,6 +162,12 @@ export function CommandPalette() {
                         ))}
                       </Command.Group>
 
+                      <Command.Group heading="Tindakan AI">
+                        {aiActions.map((it) => (
+                          <Item key={it.id} item={it} />
+                        ))}
+                      </Command.Group>
+
                       <Command.Group heading="Navigation">
                         {navigation.map((it) => (
                           <Item key={it.id} item={it} />
@@ -159,12 +200,17 @@ export function CommandPalette() {
 }
 
 function Item({ item }: { item: PaletteItem }) {
+  // AI items get a violet wash on the active row so users can't mistake an
+  // LLM-driven action for a deterministic one. The data-[selected] CSS
+  // selector matches cmdk's active-row marker.
+  const ai = item.aiAccent;
   return (
     <Command.Item
       value={`${item.label} ${item.keywords ?? ''}`}
       onSelect={item.onSelect}
+      className={ai ? 'data-[selected=true]:!bg-accent/15 data-[selected=true]:!text-accent' : ''}
     >
-      <item.icon className="size-4 text-text-tertiary" />
+      <item.icon className={ai ? 'size-4 text-accent' : 'size-4 text-text-tertiary'} />
       <span className="flex-1">{item.label}</span>
       {item.hint && <span className="text-caption text-text-tertiary">{item.hint}</span>}
       {item.shortcut && (

@@ -88,6 +88,36 @@ async function streamChat(
   }
 }
 
+// agentSessions: small fetch helper for the non-streaming session endpoints.
+// Same shape as the SSE wrapper but returns JSON.
+async function agentSessions<T = unknown>(path: string): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const co = getActiveCompany();
+  if (co) headers['X-Company-Id'] = co;
+  const r = await fetch(path, { headers });
+  const t = await r.text();
+  if (!r.ok) throw new Error(t || r.statusText);
+  return (t ? JSON.parse(t) : {}) as T;
+}
+
+interface SessionSummary {
+  id: string;
+  title: string;
+  kind: string;
+  updated_at: string;
+}
+interface SessionList { items: SessionSummary[] }
+interface SessionMessage {
+  id: string;
+  role: 'user' | 'assistant' | 'tool' | 'system';
+  content: string;
+  tool_name?: string;
+  created_at: string;
+}
+interface SessionMessages { items: SessionMessage[] }
+
 type AgentSSE =
   | { kind: 'session';     data: { session_id: string } }
   | { kind: 'tool_call';   data: { name: string; arguments: string } }
@@ -132,6 +162,37 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
     queryFn:  () => api<ContractsResp>('/agent/contracts'),
     staleTime: 5 * 60_000,
   });
+
+  // Past sessions: shown in a small dropdown next to the header so the user
+  // can resume a conversation from this session or a previous one. Lazily
+  // refreshed each time the panel opens.
+  const { data: sessions } = useQuery({
+    queryKey: ['agent-sessions', open],
+    queryFn:  () => agentSessions<SessionList>('/api/agent/v1/sessions?kind=copilot'),
+    enabled:  open,
+    staleTime: 30_000,
+  });
+  const [showSessions, setShowSessions] = useState(false);
+
+  async function loadSession(sid: string) {
+    setShowSessions(false);
+    if (sid === sessionId) return;
+    try {
+      const hist = await agentSessions(`/api/agent/v1/sessions/${sid}/messages`)
+        .then((r) => (r as SessionMessages).items)
+        .catch(() => null);
+      if (!hist) return;
+      setSessionId(sid);
+      setTurns(hist.map((m): ChatTurn => {
+        if (m.role === 'user')      return { kind: 'user',      content: m.content, at: Date.parse(m.created_at) };
+        if (m.role === 'assistant') return { kind: 'assistant', content: m.content, at: Date.parse(m.created_at) };
+        if (m.role === 'tool')      return { kind: 'tool',      name: m.tool_name ?? 'tool', ok: !m.content.includes('"error"'), at: Date.parse(m.created_at) };
+        return { kind: 'assistant', content: m.content, at: Date.parse(m.created_at) };
+      }));
+    } catch {
+      // surface in chat error rather than crashing
+    }
+  }
 
   const [pending, setPending] = useState(false);
   async function sendStreaming(msg: string) {
@@ -276,19 +337,27 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
         aria-label="Logica AI Copilot"
         className="fixed top-0 right-0 z-50 h-full w-[420px] max-w-[90vw] bg-canvas border-l border-hairline shadow-xl flex flex-col"
       >
-        <header className="px-4 py-3 border-b border-hairline flex items-center gap-2">
+        <header className="px-4 py-3 border-b border-hairline flex items-center gap-2 relative">
           <span className="inline-flex items-center justify-center size-7 rounded-full bg-accent/15 text-accent">
             <Sparkles className="size-4" />
           </span>
           <div className="min-w-0 flex-1">
             <div className="text-body-sm font-semibold text-ink">Logica AI Copilot</div>
-            <div className="text-caption text-stone truncate">
+            <button
+              type="button"
+              onClick={() => sessions && sessions.items.length > 0 && setShowSessions((v) => !v)}
+              className="text-caption text-stone hover:text-ink truncate inline-flex items-center gap-0.5"
+              title={sessions && sessions.items.length > 0 ? 'Past sessions' : ''}
+            >
               {sessionId ? `Session ${sessionId.slice(0, 14)}…` : 'New conversation'}
-            </div>
+              {sessions && sessions.items.length > 0 && (
+                <span className={cn('inline-block transition-transform', showSessions && 'rotate-180')}>▾</span>
+              )}
+            </button>
           </div>
           <button
             type="button"
-            onClick={newConversation}
+            onClick={() => { newConversation(); setShowSessions(false); }}
             title="Start a new conversation"
             className="text-stone hover:text-ink p-1"
             aria-label="New conversation"
@@ -303,6 +372,31 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
           >
             <X className="size-4" />
           </button>
+
+          {showSessions && sessions && (
+            <div className="absolute left-3 right-3 top-full mt-1 z-10 max-h-[300px] overflow-y-auto rounded-md border border-hairline bg-canvas shadow-lg">
+              <div className="px-3 py-2 border-b border-hairline text-caption text-stone">
+                Recent sessions
+              </div>
+              <ul>
+                {sessions.items.map((s) => (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => void loadSession(s.id)}
+                      className={cn(
+                        'w-full text-left px-3 py-2 text-body-sm hover:bg-surface-soft transition-colors flex items-center gap-2',
+                        s.id === sessionId && 'bg-accent/5',
+                      )}
+                    >
+                      <span className="truncate flex-1">{s.title || s.id}</span>
+                      <span className="text-caption text-stone shrink-0">{relativeTime(s.updated_at)}</span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </header>
 
         <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
@@ -393,6 +487,82 @@ const DOCTYPE_TO_URL: Record<string, { module: string; slug: string }> = {
   asset:            { module: '/assets',     slug: 'assets' },
 };
 
+// DocLinkedText renders chat content with inline `<doctype>-YYYY-NNNN` (or
+// similar) document references rewritten as clickable links to the detail
+// page. The pattern is intentionally narrow — it has to match how the ERP
+// names documents (SI-2026-0042, PI-2026-0001, JE-..., PE-..., etc.) without
+// false-positives on dates or financial figures.
+const DOC_REF_RE = /\b([A-Z]{2,5})-(\d{4})-(\d{4,6})\b/g;
+const DOC_PREFIX_TO_PATH: Record<string, { module: string; slug: string }> = {
+  SI:     { module: '/accounting', slug: 'sales-invoices' },
+  PI:     { module: '/accounting', slug: 'purchase-invoices' },
+  JE:     { module: '/accounting', slug: 'journal-entries' },
+  PE:     { module: '/accounting', slug: 'payment-entries' },
+  CUST:   { module: '/accounting', slug: 'customers' },
+  SUPP:   { module: '/accounting', slug: 'suppliers' },
+  ITEM:   { module: '/accounting', slug: 'items' },
+  EMP:    { module: '/hr',         slug: 'employees' },
+  LEAD:   { module: '/crm',        slug: 'leads' },
+  PROJ:   { module: '/projects',   slug: 'projects' },
+  ISS:    { module: '/support',    slug: 'issues' },
+  BOM:    { module: '/manufacturing', slug: 'boms' },
+  WO:     { module: '/manufacturing', slug: 'work-orders' },
+  ASSET:  { module: '/assets',     slug: 'assets' },
+  POS:    { module: '/pos',        slug: 'invoices' },
+};
+// Map from a document name → list endpoint so the link points at the list
+// pre-filtered by `?name=...` when we don't have the id. (Detail pages need
+// the id; without it we navigate to the list, which is more useful than not
+// linking at all.)
+function DocLinkedText({ text, onNavigate }: { text: string; onNavigate: (to: string) => void }) {
+  const parts: Array<string | { name: string; to: string }> = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  DOC_REF_RE.lastIndex = 0;
+  while ((m = DOC_REF_RE.exec(text)) !== null) {
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    const prefix = m[1]!;
+    const map = DOC_PREFIX_TO_PATH[prefix];
+    if (map) {
+      parts.push({ name: m[0], to: `${map.module}/${map.slug}?name=${encodeURIComponent(m[0])}` });
+    } else {
+      parts.push(m[0]);
+    }
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return (
+    <>
+      {parts.map((p, i) =>
+        typeof p === 'string'
+          ? <span key={i}>{p}</span>
+          : <button
+              key={i}
+              type="button"
+              onClick={(e) => { e.preventDefault(); onNavigate(p.to); }}
+              className="text-accent hover:underline font-mono"
+            >
+              {p.name}
+            </button>,
+      )}
+    </>
+  );
+}
+
+function relativeTime(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '';
+  const diff = Math.max(0, Date.now() - t);
+  const min = Math.round(diff / 60_000);
+  if (min < 1)    return 'now';
+  if (min < 60)   return `${min}m`;
+  const hr = Math.round(min / 60);
+  if (hr < 24)    return `${hr}h`;
+  const d  = Math.round(hr / 24);
+  if (d < 30)     return `${d}d`;
+  return iso.slice(0, 10);
+}
+
 function ChatBubble({ turn }: { turn: ChatTurn }) {
   const navigate = useNavigate();
   if (turn.kind === 'user') {
@@ -408,7 +578,7 @@ function ChatBubble({ turn }: { turn: ChatTurn }) {
     return (
       <div className="flex">
         <div className="max-w-[85%] rounded-lg px-3 py-2 text-body-sm whitespace-pre-wrap break-words bg-surface text-charcoal">
-          {turn.content}
+          <DocLinkedText text={turn.content} onNavigate={(to) => void navigate({ to: to as never })} />
           {turn.streaming && <span className="inline-block size-2 rounded-full bg-accent animate-pulse ml-1 align-middle" />}
         </div>
       </div>

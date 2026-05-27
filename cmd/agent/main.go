@@ -177,6 +177,28 @@ func registerSessions(api huma.API, store *session.Store) {
 		}
 		return &listSessionsOut{Body: listSessionsBody{Items: ss}}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-agent-session-messages",
+		Method:      http.MethodGet,
+		Path:        "/sessions/{id}/messages",
+		Summary:     "Replay one session's chronological messages — used to resume a conversation in the Copilot panel.",
+		Tags:        []string{"Agent / Sessions"},
+	}, func(ctx context.Context, in *sessionMessagesIn) (*sessionMessagesOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		// Get verifies ownership; rejects cross-user reads.
+		if _, err := store.Get(ctx, p.UserID, in.ID); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		ms, err := store.History(ctx, in.ID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &sessionMessagesOut{Body: sessionMessagesBody{Items: ms}}, nil
+	})
 }
 
 // maxToolIterations caps the number of LLM<->tool round-trips per turn so a
@@ -521,12 +543,20 @@ func registerApprovals(api huma.API, store *approvals.Store, rec *audit.Recorder
 // plus the persisted conversation history (excluding the just-appended user
 // message — the caller adds that back). Used by the chat handler.
 func buildSystemAndHistory(reg *agentcontract.Registry, history []session.Message) []llm.Message {
+	// System prompt — keep instructions in English (predictable for audit
+	// review) but tell the model to reply in whatever language the user
+	// used. Each rule earns its place: anti-hallucination, partial-name
+	// resolution, IDR formatting, tone, doc-ref formatting (drives the
+	// inline-link rendering in CopilotPanel), and approval-queue
+	// pointer (so users know where drafts end up).
 	sys := []string{
-		"You are Logica AI Copilot — a tool-using agent for an Indonesian ERP (PSAK aligned).",
-		"You answer queries about the user's own ERP data by calling tools. Never invent data.",
-		"When the user mentions a record by partial name, call global_search first.",
-		"Show currency amounts in IDR with comma thousand separators (Rp 1.234.567).",
-		"Be concise. Reply in the same language the user used (Bahasa Indonesia or English).",
+		"You are Logica AI Copilot, a tool-using agent for an Indonesian PSAK-aligned ERP.",
+		"Answer ONLY from data the tools return. If a tool yields no rows or the data isn't there, say so plainly — never invent values, ids, or names.",
+		"When the user mentions a document by partial name (e.g. \"PT Maju\", \"invoice for Mitratel\"), call global_search before any other tool.",
+		"Format IDR amounts as \"Rp 1.234.567\" (Indonesian thousands grouping). Use full doc names like \"SI-2026-0042\" — the UI will linkify them.",
+		"Match the user's language. If they write Bahasa Indonesia, reply in Bahasa; if English, English. Don't mix mid-reply.",
+		"You can DRAFT documents (docstatus=0) via create_draft and the composed create_draft_* tools — these never auto-submit. Tell the user the draft is in their AI Drafts queue for review.",
+		"Be concise. One short paragraph for status, lists for multiple rows, a single sentence for confirmations.",
 	}
 	for _, c := range reg.All() {
 		if c.SystemContext == "" {
@@ -770,6 +800,13 @@ type (
 	listSessionsOut  struct{ Body listSessionsBody }
 	listSessionsBody struct {
 		Items []session.Session `json:"items"`
+	}
+	sessionMessagesIn struct {
+		ID string `path:"id"`
+	}
+	sessionMessagesOut  struct{ Body sessionMessagesBody }
+	sessionMessagesBody struct {
+		Items []session.Message `json:"items"`
 	}
 	approvalsListOut  struct{ Body approvalsListBody }
 	approvalsListBody struct {
