@@ -80,6 +80,7 @@ func main() {
 	gate := policy.NewGate(policy.DefaultConfig(), registry)
 	rec := audit.New(db)
 	auditQuery := audit.NewQuery(db)
+	costSvc := audit.NewCostService(db)
 	sessStore := session.New(db)
 	llmClient := llm.New(llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel})
 	erp := erpclient.New(erpBase)
@@ -127,6 +128,7 @@ func main() {
 		registerMigration(hapi, migrationSvc)
 		registerNudges(hapi, nudgeEval)
 		audit.RegisterAdmin(hapi, auditQuery)
+		audit.RegisterCosts(hapi, costSvc)
 
 		// SSE streaming chat. Goes through the same Auth middleware (the
 		// chi router scope above), but bypasses huma — huma's openapi

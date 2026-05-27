@@ -12,6 +12,7 @@ import { SMTPSection }          from './SMTPSection';
 import { EmailTemplatesSection } from './EmailTemplatesSection';
 import { AuditLogSection }       from './AuditLogSection';
 import { AgentAuditLogSection }  from './AgentAuditLogSection';
+import { AgentUsageSection }     from './AgentUsageSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -157,6 +158,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'agent-audit-log', group: 'system', label: 'AI audit log', icon: Sparkles,
     description: 'Every agent prompt, tool call, proposal, approval, and policy block.',
     component: AgentAuditLogSection },
+  { key: 'agent-usage', group: 'system', label: 'AI usage & cost', icon: Sparkles,
+    description: 'Token use and IDR cost by day, user, and model.',
+    component: AgentUsageSection },
 ];
 
 /** Sidebar grouping order + labels. */
