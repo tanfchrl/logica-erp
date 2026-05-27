@@ -30,6 +30,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/materialrequest"
 	"github.com/tandigital/logica-erp/internal/assets/assetcategory"
 	"github.com/tandigital/logica-erp/internal/assets/assetmovement"
+	"github.com/tandigital/logica-erp/internal/assets/financebook"
 	"github.com/tandigital/logica-erp/internal/stock/purchasereceipt"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseinvoice"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseorder"
@@ -118,6 +119,7 @@ func main() {
 	assetSvc := asset.NewService(db)
 	assetCategorySvc := assetcategory.NewService(db)
 	assetMovementSvc := assetmovement.NewService(db)
+	financeBookSvc := financebook.NewService(db)
 	// PI's fixed-asset auto-create hook depends on assetSvc, declared
 	// above. Setting it here keeps the declaration order acyclic.
 	piSvc.AssetCreator = assetCreatorAdapter{svc: assetSvc}
@@ -267,6 +269,7 @@ func main() {
 		asset.Register(hapi, &asset.Handler{Service: assetSvc, Perm: perm})
 		assetcategory.Register(hapi, &assetcategory.Handler{Service: assetCategorySvc, Perm: perm})
 		assetmovement.Register(hapi, &assetmovement.Handler{Service: assetMovementSvc, Perm: perm})
+		financebook.Register(hapi, &financebook.Handler{Service: financeBookSvc, Perm: perm})
 
 		// Phase 5
 		employee.Register(hapi, &employee.Handler{Service: empSvc, Perm: perm})
