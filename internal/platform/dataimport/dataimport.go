@@ -57,8 +57,9 @@ type Recipe struct {
 
 	// Build constructs the SQL insert + arg list from a normalized row.
 	// Returns the human-readable identifier created (e.g. account_number or display_name)
-	// and an error if validation fails.
-	Build func(ctx context.Context, tx pgx.Tx, companyID, userID string, row map[string]string) (createdName string, err error)
+	// and an error if validation fails. Not serializable; the list endpoint
+	// only returns the schema metadata, never the builder.
+	Build func(ctx context.Context, tx pgx.Tx, companyID, userID string, row map[string]string) (createdName string, err error) `json:"-"`
 }
 
 // RowResult is what Preview/Commit return per input row.

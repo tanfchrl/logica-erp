@@ -337,6 +337,20 @@ func Register(api huma.API, h *Handler) {
 		return &issOut{Body: *i}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "get-issue", Method: http.MethodGet,
+		Path: "/support/issues/{id}", Summary: "Get an issue",
+		Tags: []string{"Support / Issue"},
+	}, func(ctx context.Context, in *issGetIn) (*issOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		i, err := h.Service.Get(ctx, in.ID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &issOut{Body: *i}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "update-issue", Method: http.MethodPut,
 		Path: "/support/issues/{id}", Summary: "Update an issue",
 		Tags: []string{"Support / Issue"},
@@ -380,5 +394,8 @@ type (
 	issUpdateIn struct {
 		ID   string `path:"id"`
 		Body IssueUpdateInput
+	}
+	issGetIn struct {
+		ID string `path:"id"`
 	}
 )

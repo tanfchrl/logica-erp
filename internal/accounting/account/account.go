@@ -256,6 +256,23 @@ func Register(api huma.API, h *Handler) {
 	})
 
 	huma.Register(api, huma.Operation{
+		OperationID: "get-account",
+		Method:      http.MethodGet,
+		Path:        "/accounting/accounts/{id}",
+		Summary:     "Get an account",
+		Tags:        []string{"Accounting / Account"},
+	}, func(ctx context.Context, in *accountGetIn) (*accountCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionRead); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		a, err := h.Service.Get(ctx, in.ID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &accountCreateOut{Body: *a}, nil
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "update-account",
 		Method:      http.MethodPut,
 		Path:        "/accounting/accounts/{id}",
@@ -283,6 +300,9 @@ type (
 	accountUpdateIn struct {
 		ID   string `path:"id"`
 		Body AccountUpdateInput
+	}
+	accountGetIn struct {
+		ID string `path:"id"`
 	}
 )
 
