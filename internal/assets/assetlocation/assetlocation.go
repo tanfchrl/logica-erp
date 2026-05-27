@@ -19,6 +19,7 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/jackc/pgx/v5"
+	"github.com/shopspring/decimal"
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
@@ -30,21 +31,25 @@ import (
 const Doctype = "asset_location"
 
 type AssetLocation struct {
-	ID         string    `json:"id"`
-	CompanyID  string    `json:"company_id"`
-	ParentID   string    `json:"parent_id,omitempty"`
-	Name       string    `json:"name"`
-	Address    string    `json:"address,omitempty"`
-	IsGroup    bool      `json:"is_group"`
-	IsDeleted  bool      `json:"is_deleted"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID         string           `json:"id"`
+	CompanyID  string           `json:"company_id"`
+	ParentID   string           `json:"parent_id,omitempty"`
+	Name       string           `json:"name"`
+	Address    string           `json:"address,omitempty"`
+	Latitude   *decimal.Decimal `json:"latitude,omitempty"`
+	Longitude  *decimal.Decimal `json:"longitude,omitempty"`
+	IsGroup    bool             `json:"is_group"`
+	IsDeleted  bool             `json:"is_deleted"`
+	CreatedAt  time.Time        `json:"created_at"`
 }
 
 type AssetLocationInput struct {
-	ParentID string `json:"parent_id,omitempty" doc:"id of parent location for tree placement"`
-	Name     string `json:"name"`
-	Address  string `json:"address,omitempty"`
-	IsGroup  bool   `json:"is_group,omitempty" doc:"group nodes can't be the leaf where an asset sits"`
+	ParentID  string `json:"parent_id,omitempty" doc:"id of parent location for tree placement"`
+	Name      string `json:"name"`
+	Address   string `json:"address,omitempty"`
+	Latitude  string `json:"latitude,omitempty"  doc:"decimal degrees, -90..90; leave blank to clear"`
+	Longitude string `json:"longitude,omitempty" doc:"decimal degrees, -180..180; leave blank to clear"`
+	IsGroup   bool   `json:"is_group,omitempty"  doc:"group nodes can't be the leaf where an asset sits"`
 }
 
 type Service struct{ db *dbx.DB }
@@ -83,10 +88,18 @@ func (s *Service) Create(ctx context.Context, companyID string, in AssetLocation
 				return errors.New("parent_id: only group locations can have children")
 			}
 		}
+		lat, err := parseCoord(in.Latitude, -90, 90, "latitude")
+		if err != nil {
+			return err
+		}
+		lng, err := parseCoord(in.Longitude, -180, 180, "longitude")
+		if err != nil {
+			return err
+		}
 		if _, err := tx.Exec(ctx, `
-			INSERT INTO asset_location (id, company_id, parent_id, name, address, is_group)
-			VALUES ($1,$2,$3,$4,$5,$6)`,
-			id, companyID, nullable(in.ParentID), in.Name, nullable(in.Address), in.IsGroup); err != nil {
+			INSERT INTO asset_location (id, company_id, parent_id, name, address, latitude, longitude, is_group)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+			id, companyID, nullable(in.ParentID), in.Name, nullable(in.Address), lat, lng, in.IsGroup); err != nil {
 			if dbx.IsUniqueViolation(err) {
 				return fmt.Errorf("asset_location: name %q already used in this company", in.Name)
 			}
@@ -135,11 +148,21 @@ func (s *Service) Update(ctx context.Context, id string, in AssetLocationInput) 
 				cur = *next
 			}
 		}
+		lat, err := parseCoord(in.Latitude, -90, 90, "latitude")
+		if err != nil {
+			return err
+		}
+		lng, err := parseCoord(in.Longitude, -180, 180, "longitude")
+		if err != nil {
+			return err
+		}
 		tag, err := tx.Exec(ctx, `
 			UPDATE asset_location SET
-			  parent_id = $1, name = $2, address = $3, is_group = $4
-			WHERE id = $5 AND is_deleted = false`,
-			nullable(in.ParentID), in.Name, nullable(in.Address), in.IsGroup, id)
+			  parent_id = $1, name = $2, address = $3,
+			  latitude = $4, longitude = $5,
+			  is_group = $6
+			WHERE id = $7 AND is_deleted = false`,
+			nullable(in.ParentID), in.Name, nullable(in.Address), lat, lng, in.IsGroup, id)
 		if err != nil {
 			if dbx.IsUniqueViolation(err) {
 				return fmt.Errorf("asset_location: name %q already used in this company", in.Name)
@@ -178,6 +201,7 @@ func (s *Service) Get(ctx context.Context, id string) (*AssetLocation, error) {
 func (s *Service) List(ctx context.Context, companyID string) ([]AssetLocation, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, company_id, coalesce(parent_id,''), name, coalesce(address,''),
+		       latitude, longitude,
 		       is_group, is_deleted, created_at
 		FROM asset_location
 		WHERE company_id = $1 AND is_deleted = false
@@ -190,6 +214,7 @@ func (s *Service) List(ctx context.Context, companyID string) ([]AssetLocation, 
 	for rows.Next() {
 		var l AssetLocation
 		if err := rows.Scan(&l.ID, &l.CompanyID, &l.ParentID, &l.Name, &l.Address,
+			&l.Latitude, &l.Longitude,
 			&l.IsGroup, &l.IsDeleted, &l.CreatedAt); err != nil {
 			return nil, err
 		}
@@ -244,9 +269,11 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*AssetLocation, error) {
 	var l AssetLocation
 	var parent, addr *string
 	err := tx.QueryRow(ctx, `
-		SELECT id, company_id, parent_id, name, address, is_group, is_deleted, created_at
+		SELECT id, company_id, parent_id, name, address, latitude, longitude,
+		       is_group, is_deleted, created_at
 		FROM asset_location WHERE id = $1`, id).
-		Scan(&l.ID, &l.CompanyID, &parent, &l.Name, &addr, &l.IsGroup, &l.IsDeleted, &l.CreatedAt)
+		Scan(&l.ID, &l.CompanyID, &parent, &l.Name, &addr, &l.Latitude, &l.Longitude,
+			&l.IsGroup, &l.IsDeleted, &l.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("asset_location %s not found", id)
 	}
@@ -267,6 +294,25 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+// parseCoord turns the API's string-form lat/lng into a decimal pointer
+// or nil. Empty string = "clear the column". Validates the bounds at the
+// service layer so the error surfaces clearly (the DB CHECK is a backstop).
+func parseCoord(s string, lo, hi float64, field string) (any, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, nil
+	}
+	d, err := decimal.NewFromString(s)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", field, err)
+	}
+	f, _ := d.Float64()
+	if f < lo || f > hi {
+		return nil, fmt.Errorf("%s: must be in [%g, %g]", field, lo, hi)
+	}
+	return d, nil
 }
 
 // ---- HTTP ----

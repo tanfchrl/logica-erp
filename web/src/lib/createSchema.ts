@@ -290,7 +290,7 @@ export const assetMovementCreate: CreateSchema = {
 };
 
 export const assetLocationCreate: CreateSchema = {
-  notice: 'Hierarchical master of physical sites. Group locations (e.g. "Jakarta HQ") can have children; leaf locations (e.g. "Conference Room A") are where assets actually sit.',
+  notice: 'Hierarchical master of physical sites. Group locations (e.g. "Jakarta HQ") can have children; leaf locations (e.g. "Conference Room A") are where assets actually sit. Lat/lng are optional — fill them when you want this location to render on a map.',
   fields: [
     { name: 'name',      label: 'Location name', kind: 'text', required: true, span: 2 },
     { name: 'parent_id', label: 'Parent', kind: 'link',
@@ -299,6 +299,10 @@ export const assetLocationCreate: CreateSchema = {
     { name: 'is_group',  label: 'Group node', kind: 'bool',
       hint: 'On = can have child locations under it; off = leaf where assets are placed.' },
     { name: 'address',   label: 'Address', kind: 'textarea', span: 2 },
+    { name: 'latitude',  label: 'Latitude',  kind: 'text',
+      placeholder: '-6.2088', hint: 'Decimal degrees, −90 … 90.' },
+    { name: 'longitude', label: 'Longitude', kind: 'text',
+      placeholder: '106.8456', hint: 'Decimal degrees, −180 … 180.' },
   ],
 };
 
