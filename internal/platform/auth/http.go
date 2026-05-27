@@ -140,6 +140,53 @@ func Register(api huma.API, h *Handler) {
 			Companies: p.Companies, Roles: p.Roles, IsSystem: p.IsSystem,
 		}}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "auth-permissions",
+		Method:      http.MethodGet,
+		Path:        "/auth/permissions",
+		Summary:     "Effective doctype read/write permissions for the current user — drives sidebar visibility",
+		Tags:        []string{"Auth"},
+	}, func(ctx context.Context, _ *struct{}) (*permsOut, error) {
+		p := FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		// System users implicitly read+write everything. Don't bother
+		// hitting role_permission — return a wildcard flag that the FE
+		// short-circuits on.
+		if p.IsSystem {
+			return &permsOut{Body: permsBody{IsSystem: true, Doctypes: map[string]docPerm{}}}, nil
+		}
+		out := map[string]docPerm{}
+		if len(p.Roles) > 0 {
+			rows, err := h.DB.Query(ctx, `
+				SELECT doctype,
+				       bool_or(can_read)   AS r,
+				       bool_or(can_write)  AS w,
+				       bool_or(can_create) AS c,
+				       bool_or(can_delete) AS d,
+				       bool_or(can_submit) AS s,
+				       bool_or(can_cancel) AS x,
+				       bool_or(can_export) AS e
+				FROM role_permission
+				WHERE role_id = ANY($1)
+				GROUP BY doctype`, p.Roles)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var dt string
+				var dp docPerm
+				if err := rows.Scan(&dt, &dp.Read, &dp.Write, &dp.Create, &dp.Delete, &dp.Submit, &dp.Cancel, &dp.Export); err != nil {
+					return nil, err
+				}
+				out[dt] = dp
+			}
+		}
+		return &permsOut{Body: permsBody{IsSystem: false, Doctypes: out}}, nil
+	})
 }
 
 // --- helpers ---
@@ -310,4 +357,23 @@ type meBody struct {
 	Companies []string `json:"companies"`
 	Roles     []string `json:"roles"`
 	IsSystem  bool     `json:"is_system"`
+}
+
+type permsOut struct {
+	Body permsBody
+}
+type permsBody struct {
+	// IsSystem short-circuits the FE: a system user sees every menu
+	// regardless of role-permission rows.
+	IsSystem bool                `json:"is_system"`
+	Doctypes map[string]docPerm  `json:"doctypes"`
+}
+type docPerm struct {
+	Read   bool `json:"read"`
+	Write  bool `json:"write"`
+	Create bool `json:"create"`
+	Delete bool `json:"delete"`
+	Submit bool `json:"submit"`
+	Cancel bool `json:"cancel"`
+	Export bool `json:"export"`
 }

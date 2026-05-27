@@ -7,6 +7,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { useUI } from '@/store/ui';
+import { useMyPermissions } from '@/lib/permissions';
 import { Tooltip } from '@/components/Tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/DropdownMenu';
 
@@ -22,7 +23,14 @@ interface NavSection {
   items: NavItem[];
 }
 
-const sections: NavSection[] = [
+// requireAny: the user needs read access to AT LEAST ONE of these doctypes
+// for the menu item to show. Items without `requireAny` are always visible
+// (e.g. Home). Module umbrella items (e.g. /accounting) list every doctype
+// that lives under that module — a Manager who can only read `customer`
+// still sees /accounting because it has something inside.
+type GuardedNavItem = NavItem & { requireAny?: string[] };
+
+const sections: { label?: string; items: GuardedNavItem[] }[] = [
   {
     items: [
       { to: '/', label: 'Home', icon: Home, shortcut: 'G H' },
@@ -31,23 +39,23 @@ const sections: NavSection[] = [
   {
     label: 'Starred',
     items: [
-      { to: '/accounting/sales-invoices', label: 'Sales Invoices', icon: Receipt },
-      { to: '/accounting/items', label: 'Items', icon: Package },
+      { to: '/accounting/sales-invoices', label: 'Sales Invoices', icon: Receipt, requireAny: ['sales_invoice'] },
+      { to: '/accounting/items',          label: 'Items',          icon: Package, requireAny: ['item'] },
     ],
   },
   {
     label: 'Modules',
     items: [
-      { to: '/accounting',     label: 'Finance',            icon: Wallet },
-      { to: '/stock',          label: 'Stock',              icon: Warehouse },
-      { to: '/buying',         label: 'Procurement',        icon: ShoppingBag },
-      { to: '/selling',        label: 'Sales',              icon: BarChart3 },
-      { to: '/manufacturing',  label: 'Production',         icon: Factory },
-      { to: '/projects',       label: 'Operations',         icon: Briefcase },
-      { to: '/crm',            label: 'CRM',                icon: UserSquare },
-      { to: '/hr',             label: 'HR & Payroll',       icon: Users },
-      { to: '/assets',         label: 'Asset & Inventory',  icon: ClipboardList },
-      { to: '/support',        label: 'Helpdesk',           icon: Headphones },
+      { to: '/accounting',     label: 'Finance',            icon: Wallet,         requireAny: ['sales_invoice','purchase_invoice','journal_entry','payment_entry','customer','supplier','item','tax_template','account'] },
+      { to: '/stock',          label: 'Stock',              icon: Warehouse,      requireAny: ['warehouse'] },
+      { to: '/buying',         label: 'Procurement',        icon: ShoppingBag,    requireAny: ['purchase_invoice','supplier'] },
+      { to: '/selling',        label: 'Sales',              icon: BarChart3,      requireAny: ['sales_invoice','customer','lead'] },
+      { to: '/manufacturing',  label: 'Production',         icon: Factory,        requireAny: ['bom','work_order'] },
+      { to: '/projects',       label: 'Operations',         icon: Briefcase,      requireAny: ['project'] },
+      { to: '/crm',            label: 'CRM',                icon: UserSquare,     requireAny: ['lead','customer'] },
+      { to: '/hr',             label: 'HR & Payroll',       icon: Users,          requireAny: ['employee'] },
+      { to: '/assets',         label: 'Asset & Inventory',  icon: ClipboardList,  requireAny: ['asset'] },
+      { to: '/support',        label: 'Helpdesk',           icon: Headphones,     requireAny: ['issue'] },
     ],
   },
 ];
@@ -57,6 +65,16 @@ export function Sidebar() {
   const router = useRouterState();
   const path = router.location.pathname;
   const { t: _t } = useTranslation();
+  const perms = useMyPermissions();
+
+  // Filter each section's items by the caller's read perms. Drop sections
+  // that end up empty — a label with zero items is just noise.
+  const visibleSections = sections
+    .map((s) => ({
+      ...s,
+      items: s.items.filter((it) => !it.requireAny || perms.canRead_any(it.requireAny)),
+    }))
+    .filter((s) => s.items.length > 0);
 
   return (
     <aside
@@ -72,7 +90,7 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-5">
-        {sections.map((section, sIdx) => (
+        {visibleSections.map((section, sIdx) => (
           <div key={sIdx}>
             {section.label && !sidebarCollapsed && (
               <div className="px-2.5 pt-1 pb-1.5 flex items-center gap-1.5 text-stone text-micro-uppercase">

@@ -2,6 +2,7 @@ import { Link, useParams } from '@tanstack/react-router';
 import { PageHeader } from '@/components/PageHeader';
 import { cn } from '@/lib/cn';
 import { SECTIONS, GROUPS, findSection } from './sections';
+import { useMyPermissions } from '@/lib/permissions';
 
 /**
  * Settings shell — sidebar nav driven by the section registry, with the
@@ -12,6 +13,13 @@ export function SettingsLayout() {
   const { section: sectionKey } = useParams({ strict: false }) as { section?: string };
   const active = findSection(sectionKey);
   const Section = active.component;
+  const perms = useMyPermissions();
+  // Filter sections by requireSystem. A non-system user landing on a
+  // requireSystem section sees the 403 message from the underlying handler
+  // anyway, but the nav hides the entry so they don't trip into it.
+  const visibleSections = perms.isSystem
+    ? SECTIONS
+    : SECTIONS.filter((s) => !s.requireSystem);
 
   return (
     <>
@@ -26,7 +34,7 @@ export function SettingsLayout() {
           {/* Sidebar nav — grouped */}
           <nav className="space-y-5 lg:sticky lg:top-4 lg:self-start">
             {GROUPS.map((g) => {
-              const items = SECTIONS.filter((s) => s.group === g.key);
+              const items = visibleSections.filter((s) => s.group === g.key);
               if (items.length === 0) return null;
               return (
                 <div key={g.key}>

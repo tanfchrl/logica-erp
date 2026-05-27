@@ -43,6 +43,8 @@ export interface SectionDef {
   /** Top-level grouping for the sidebar. */
   group: 'general' | 'access' | 'finance' | 'documents' | 'comms' | 'integrations' | 'automation' | 'data' | 'system';
   component: React.ComponentType;
+  /** Hide this section unless the caller is a system administrator. */
+  requireSystem?: boolean;
 }
 
 /* Helper to build a ComingSoon section without repeating boilerplate. */
@@ -62,84 +64,84 @@ export const SECTIONS: SectionDef[] = [
     component: LocalizationSection },
   { key: 'company', group: 'general', label: 'Companies', icon: Building2,
     description: 'Legal entities you do business under.',
-    component: CompanySection },
+    component: CompanySection, requireSystem: true },
 
   // ----- Users & Access -----
   { key: 'users', group: 'access', label: 'Users', icon: UserCog,
     description: 'Invite, deactivate, set passwords, assign roles + companies, manage sessions.',
-    component: UsersSection },
+    component: UsersSection, requireSystem: true },
   { key: 'roles', group: 'access', label: 'Roles & permissions', icon: ShieldCheck,
     description: 'Define roles and the per-doctype permission matrix.',
-    component: RolesSection },
+    component: RolesSection, requireSystem: true },
   { key: 'sessions', group: 'access', label: 'Sessions & devices', icon: KeyRound,
     description: 'Your active sessions and revoke any device.',
-    component: SessionsSection },
+    component: SessionsSection /* available to everyone — own-sessions only */ },
   { key: 'api-tokens', group: 'access', label: 'API tokens', icon: Hash,
     description: 'Personal access tokens for scripts and integrations.',
-    component: APITokensSection },
+    component: APITokensSection /* personal tokens; user can manage their own */ },
 
   // ----- Finance -----
   { key: 'fiscal-years', group: 'finance', label: 'Fiscal years', icon: Calculator,
     description: 'Fiscal periods, year-end close, and period locks.',
-    component: FiscalYearsSection },
+    component: FiscalYearsSection, requireSystem: true },
   { key: 'tax-templates', group: 'finance', label: 'Tax templates', icon: FileText,
     description: 'PPN templates, withholding tax types, and categories.',
-    component: TaxTemplatesSection },
+    component: TaxTemplatesSection, requireSystem: true },
   { key: 'efaktur', group: 'finance', label: 'e-Faktur / Coretax', icon: ScrollText,
     description: 'CSV export for the Indonesian tax authority.',
-    component: EFakturSection },
+    component: EFakturSection, requireSystem: true },
   { key: 'payroll-config', group: 'finance', label: 'Payroll configuration', icon: Calculator,
     description: 'BPJS rates and PPh21 TER tables, versioned by effective date.',
-    component: PayrollConfigSection },
+    component: PayrollConfigSection, requireSystem: true },
   { key: 'numbering', group: 'finance', label: 'Numbering series', icon: Hash,
     description: 'Document number patterns per doctype + company.',
-    component: NumberingSection },
+    component: NumberingSection, requireSystem: true },
 
   // ----- Documents -----
   { key: 'print-templates', group: 'documents', label: 'Print templates', icon: FileText,
     description: 'PDF templates per doctype, letterheads, paper size, and margins.',
-    component: PrintTemplatesSection },
+    component: PrintTemplatesSection, requireSystem: true },
 
   // ----- Communications -----
   { key: 'smtp', group: 'comms', label: 'Email (SMTP)', icon: Mail,
     description: 'Outbound mail server + test send + delivery log.',
-    component: SMTPSection },
+    component: SMTPSection, requireSystem: true },
   { key: 'email-templates', group: 'comms', label: 'Email templates', icon: BookOpen,
     description: 'Per-event subject + body templates.',
-    component: EmailTemplatesSection },
+    component: EmailTemplatesSection, requireSystem: true },
   { key: 'notifications', group: 'comms', label: 'Notification rules', icon: Bell,
     description: 'Event → recipient → channel routing (storage only; engine wiring next).',
-    component: NotificationRulesSection },
+    component: NotificationRulesSection, requireSystem: true },
 
   // ----- Integrations -----
   { key: 'payment-gateways', group: 'integrations', label: 'Payment gateways', icon: Plug,
     description: 'Midtrans, Xendit, DOKU, iPaymu — credential storage.',
-    component: PaymentGatewaysSection },
+    component: PaymentGatewaysSection, requireSystem: true },
   { key: 'bank-feeds', group: 'integrations', label: 'Bank feeds', icon: Plug,
     description: 'BCA / Mandiri / BRI / BNI / Brick / Finantier — credential storage.',
-    component: BankFeedsSection },
+    component: BankFeedsSection, requireSystem: true },
   { key: 'marketplaces', group: 'integrations', label: 'Marketplaces', icon: Plug,
     description: 'Tokopedia, Shopee, TikTok Shop, Lazada — credential storage.',
-    component: MarketplacesSection },
+    component: MarketplacesSection, requireSystem: true },
   { key: 'webhooks', group: 'integrations', label: 'Webhooks', icon: Plug,
     description: 'HMAC-signed outbound HTTP hooks on events; delivery log + replay.',
-    component: WebhooksSection },
+    component: WebhooksSection, requireSystem: true },
 
   // ----- Automation -----
   { key: 'approvals', group: 'automation', label: 'Approvals inbox', icon: Inbox,
     description: 'Pending and resolved approval requests for the roles you hold.',
-    component: ApprovalsInboxSection },
+    component: ApprovalsInboxSection /* surfaces only the caller's own approval queue */ },
   { key: 'workflows', group: 'automation', label: 'Workflows', icon: Wand2,
     description: 'State machines per doctype + amount/role-based approval rules.',
-    component: WorkflowsSection },
+    component: WorkflowsSection, requireSystem: true },
   { key: 'jobs', group: 'automation', label: 'System health', icon: Server,
     description: 'Failed deliveries, stuck approvals, import errors over the last 24h.',
-    component: SystemHealthSection },
+    component: SystemHealthSection, requireSystem: true },
 
   // ----- Data -----
   { key: 'import-export', group: 'data', label: 'Import / Export', icon: Database,
     description: 'CSV bulk import for customers, suppliers, items, chart of accounts.',
-    component: ImportExportSection },
+    component: ImportExportSection, requireSystem: true },
   { key: 'backups', group: 'data', label: 'Backups', icon: Database,
     description: 'Snapshot, restore, off-site target.',
     component: soon({
@@ -149,18 +151,18 @@ export const SECTIONS: SectionDef[] = [
                   'S3 / B2 off-site target', 'Restore from snapshot',
                   'Retention policy'],
       backend: 'needs-backend',
-    }) },
+    }), requireSystem: true },
 
   // ----- System -----
   { key: 'audit-log', group: 'system', label: 'Audit log', icon: ScrollText,
     description: 'Who changed what, when.',
-    component: AuditLogSection },
+    component: AuditLogSection, requireSystem: true },
   { key: 'agent-audit-log', group: 'system', label: 'AI audit log', icon: Sparkles,
     description: 'Every agent prompt, tool call, proposal, approval, and policy block.',
-    component: AgentAuditLogSection },
+    component: AgentAuditLogSection, requireSystem: true },
   { key: 'agent-usage', group: 'system', label: 'AI usage & cost', icon: Sparkles,
     description: 'Token use and IDR cost by day, user, and model.',
-    component: AgentUsageSection },
+    component: AgentUsageSection, requireSystem: true },
 ];
 
 /** Sidebar grouping order + labels. */
