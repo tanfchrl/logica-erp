@@ -239,9 +239,9 @@ function MetaRail({ record }: { record: Record<string, unknown> }) {
   return (
     <div className="space-y-4">
       <Card>
-        <CardTitle>Meta</CardTitle>
+        <CardTitle>Transaction Record</CardTitle>
         <div className="mt-3 space-y-2 text-body-sm">
-          <Row label="ID" value={String(record.id ?? '—')} mono />
+          {caller?.is_system && <Row label="ID" value={String(record.id ?? '—')} mono />}
           {created && <Row label="Created" value={date(created)} icon={Calendar} />}
           {updated && <Row label="Updated" value={date(updated)} icon={Calendar} />}
         </div>
