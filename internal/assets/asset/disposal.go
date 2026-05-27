@@ -21,6 +21,71 @@ const (
 	DisposalScrap = "scrap"
 )
 
+// AssetDraftFromPI carries the minimum fields needed to materialise an asset
+// draft from a Purchase Invoice line. Mirrors the PI package's anonymous
+// shape so both compile against the same struct via duck typing in
+// cmd/api/main.go (adapter pattern).
+type AssetDraftFromPI struct {
+	CompanyID       string
+	AssetName       string
+	AssetCategoryID string
+	PurchaseDate    string
+	GrossAmount     string
+	SourcePIID      string
+	SourcePIItemRow int
+}
+
+// CreateDraftForPILine materialises one draft Asset from a PI fixed-asset
+// line. Defaults flow from the supplied AssetCategory; the user can fine-
+// tune later before submitting. Skips silently if no category is set —
+// without a category, we don't have the three required GL accounts to
+// populate, and a draft with NULL FK columns would fail the NOT NULL check.
+//
+// (CreateDraftForPILine is the implementation of the PI service's
+//  AssetCreator interface — see internal/accounting/purchaseinvoice.)
+func (s *Service) CreateDraftForPILine(ctx context.Context, in AssetDraftFromPI) error {
+	if in.AssetCategoryID == "" {
+		return fmt.Errorf("asset: cannot auto-create from PI %s line %d — item.asset_category_id is required",
+			in.SourcePIID, in.SourcePIItemRow)
+	}
+	// Pull the category's defaults for the four config fields.
+	var (
+		method   string
+		months   int
+		assetAcc string
+		accDepAcc string
+		expAcc   string
+	)
+	err := s.db.QueryRow(ctx, `
+		SELECT default_depreciation_method, total_useful_life_months,
+		       coalesce(asset_account_id, ''),
+		       coalesce(accumulated_depreciation_account_id, ''),
+		       coalesce(depreciation_expense_account_id, '')
+		FROM asset_category WHERE id = $1 AND is_deleted = false`,
+		in.AssetCategoryID).Scan(&method, &months, &assetAcc, &accDepAcc, &expAcc)
+	if err != nil {
+		return fmt.Errorf("asset_category %s: %w", in.AssetCategoryID, err)
+	}
+	if assetAcc == "" || accDepAcc == "" || expAcc == "" {
+		return fmt.Errorf("asset_category %s: all three GL accounts must be set before auto-create from PI", in.AssetCategoryID)
+	}
+
+	_, err = s.Create(ctx, AssetCreateInput{
+		CompanyID:                        in.CompanyID,
+		AssetName:                        in.AssetName,
+		AssetCategoryID:                  in.AssetCategoryID,
+		PurchaseDate:                     in.PurchaseDate,
+		GrossPurchaseAmount:              in.GrossAmount,
+		UsefulLifeMonths:                 months,
+		DepreciationMethod:               method,
+		AssetAccountID:                   assetAcc,
+		AccumulatedDepreciationAccountID: accDepAcc,
+		DepreciationExpenseAccountID:     expAcc,
+	})
+	return err
+}
+
+
 // DisposeInput is what /assets/assets/{id}/dispose accepts.
 type DisposeInput struct {
 	Kind                   string `json:"kind"  doc:"sale | scrap"`

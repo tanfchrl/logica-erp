@@ -174,12 +174,34 @@ type Service struct {
 	// per-company Buying Settings (over-billing tolerance, "PO required",
 	// etc). Nil is fine — treated as "no extra constraints".
 	BuyingSettings buyingSettingsProvider
+	// AssetCreator is optional. When set, PI Submit auto-creates draft
+	// Asset records for every line whose item has is_fixed_asset=true.
+	AssetCreator AssetCreator
 }
 
 // buyingSettingsProvider is the narrow contract Submit/Create needs from
 // buyingsettings.Service — defined locally to keep the package decoupled.
 type buyingSettingsProvider interface {
 	ForCompany(ctx context.Context, companyID string) (BuyingSettingsSnapshot, error)
+}
+
+// AssetCreator is the narrow contract Submit needs from asset.Service to
+// auto-create draft assets for is_fixed_asset items. Defined locally to
+// avoid an import cycle (assets has its own audit/auth wiring).
+type AssetCreator interface {
+	CreateDraftForPILine(ctx context.Context, in AssetDraftFromPI) error
+}
+
+// AssetDraftFromPI is the per-unit payload the PI service hands the asset
+// creator. Each call materialises one draft Asset.
+type AssetDraftFromPI struct {
+	CompanyID         string
+	AssetName         string  // e.g. "PI-2026-0042 / Laptop / 1"
+	AssetCategoryID   string  // copied from item.asset_category_id
+	PurchaseDate      string  // YYYY-MM-DD
+	GrossAmount       string  // per-unit rate
+	SourcePIID        string
+	SourcePIItemRow   int
 }
 
 // BuyingSettingsSnapshot is the subset of Buying Settings PI cares about.
@@ -576,6 +598,9 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 		return nil, errors.New("purchase_invoice: unauthenticated")
 	}
 	var out PurchaseInvoice
+	// Populated inside Tx, drained AFTER commit so asset.Service.Create
+	// can open its own transaction without nesting.
+	var assetDraftQueue []AssetDraftFromPI
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
 		pi, err := load(ctx, tx, id)
 		if err != nil {
@@ -751,6 +776,44 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 		if err := audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionSubmit, audit.Diff{}); err != nil {
 			return err
 		}
+		// Stash the fixed-asset draft requests for post-commit execution.
+		// We can't run them inside this Tx because asset.Service.Create
+		// opens its own transaction (nested begin would fail).
+		if s.AssetCreator != nil && !pi.IsReturn {
+			for _, l := range pi.Items {
+				if l.ItemID == "" {
+					continue
+				}
+				var isFixedAsset bool
+				var categoryID *string
+				if err := tx.QueryRow(ctx,
+					`SELECT is_fixed_asset, asset_category_id FROM item WHERE id = $1`,
+					l.ItemID).Scan(&isFixedAsset, &categoryID); err != nil {
+					continue // missing item shouldn't kill submit; just don't auto-create
+				}
+				if !isFixedAsset {
+					continue
+				}
+				cat := ""
+				if categoryID != nil {
+					cat = *categoryID
+				}
+				// One draft per integer unit. Fractional qty is rounded
+				// down — fractional units of a fixed asset are nonsense.
+				units := int(l.Qty.IntPart())
+				for u := 0; u < units; u++ {
+					assetDraftQueue = append(assetDraftQueue, AssetDraftFromPI{
+						CompanyID:       pi.CompanyID,
+						AssetName:       fmt.Sprintf("%s / %s / %d", pi.Name, l.ItemCode, u+1),
+						AssetCategoryID: cat,
+						PurchaseDate:    pi.PostingDate.Format("2006-01-02"),
+						GrossAmount:     l.Rate.String(),
+						SourcePIID:      pi.ID,
+						SourcePIItemRow: l.RowIndex,
+					})
+				}
+			}
+		}
 		loaded, err := load(ctx, tx, id)
 		if err != nil {
 			return err
@@ -758,7 +821,20 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 		out = *loaded
 		return nil
 	})
-	return &out, err
+	if err != nil {
+		return nil, err
+	}
+	// Post-commit auto-asset creation. Failures here don't unwind the PI
+	// submit (already committed) — log them for the operator to retry by
+	// hand. The asset draft is recoverable; the alternative would be to
+	// roll back a posted PI which is far worse.
+	for _, in := range assetDraftQueue {
+		if errCreate := s.AssetCreator.CreateDraftForPILine(ctx, in); errCreate != nil {
+			fmt.Printf("purchase_invoice: auto-asset for PI %s line %d failed: %v\n",
+				in.SourcePIID, in.SourcePIItemRow, errCreate)
+		}
+	}
+	return &out, nil
 }
 
 // ---- Cancel ----

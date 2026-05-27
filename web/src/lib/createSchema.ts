@@ -99,6 +99,11 @@ export const itemCreate: CreateSchema = {
     { name: 'is_stock_item', label: 'Stock item',    kind: 'bool' },
     { name: 'is_sales_item', label: 'Sales item',    kind: 'bool', default: true },
     { name: 'is_purchase_item', label: 'Purchase item', kind: 'bool', default: true },
+    { name: 'is_fixed_asset', label: 'Fixed asset',  kind: 'bool',
+      hint: 'On = PI submit auto-creates an Asset draft per unit, using the asset category below.' },
+    { name: 'asset_category_id', label: 'Default asset category', kind: 'link',
+      linkEndpoint: '/assets/asset-categories', linkLabel: 'name', linkDescription: 'default_depreciation_method',
+      hint: 'Required when "Fixed asset" is on.' },
   ],
 };
 

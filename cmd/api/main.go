@@ -116,6 +116,9 @@ func main() {
 	woSvc := workorder.NewService(db)
 	assetSvc := asset.NewService(db)
 	assetCategorySvc := assetcategory.NewService(db)
+	// PI's fixed-asset auto-create hook depends on assetSvc, declared
+	// above. Setting it here keeps the declaration order acyclic.
+	piSvc.AssetCreator = assetCreatorAdapter{svc: assetSvc}
 	empSvc := employee.NewService(db)
 	payrollSvc := hrpayroll.NewService(db)
 	posSvc := pos.NewService(db)
@@ -322,6 +325,25 @@ func main() {
 // type.
 type buyingSettingsAdapter struct {
 	svc *buyingsettings.Service
+}
+
+// assetCreatorAdapter bridges purchaseinvoice.AssetCreator (declared
+// locally there for decoupling) onto asset.Service.CreateDraftForPILine.
+// The two structs are field-for-field equivalent.
+type assetCreatorAdapter struct {
+	svc *asset.Service
+}
+
+func (a assetCreatorAdapter) CreateDraftForPILine(ctx context.Context, in purchaseinvoice.AssetDraftFromPI) error {
+	return a.svc.CreateDraftForPILine(ctx, asset.AssetDraftFromPI{
+		CompanyID:       in.CompanyID,
+		AssetName:       in.AssetName,
+		AssetCategoryID: in.AssetCategoryID,
+		PurchaseDate:    in.PurchaseDate,
+		GrossAmount:     in.GrossAmount,
+		SourcePIID:      in.SourcePIID,
+		SourcePIItemRow: in.SourcePIItemRow,
+	})
 }
 
 func (a buyingSettingsAdapter) ForCompany(ctx context.Context, companyID string) (purchaseinvoice.BuyingSettingsSnapshot, error) {

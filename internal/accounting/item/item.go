@@ -25,19 +25,21 @@ import (
 const Doctype = "item"
 
 type Item struct {
-	ID             string          `json:"id"`
-	Code           string          `json:"code"`
-	Name           string          `json:"name"`
-	Description    string          `json:"description,omitempty"`
-	ItemGroupID    string          `json:"item_group_id,omitempty"`
-	StockUOM       string          `json:"stock_uom"`
-	IsStockItem    bool            `json:"is_stock_item"`
-	IsSalesItem    bool            `json:"is_sales_item"`
-	IsPurchaseItem bool            `json:"is_purchase_item"`
-	StandardRate   decimal.Decimal `json:"standard_rate"`
-	CreatedAt      time.Time       `json:"created_at"`
-	UpdatedAt      time.Time       `json:"updated_at"`
-	Defaults       []ItemDefault   `json:"defaults,omitempty"`
+	ID              string          `json:"id"`
+	Code            string          `json:"code"`
+	Name            string          `json:"name"`
+	Description     string          `json:"description,omitempty"`
+	ItemGroupID     string          `json:"item_group_id,omitempty"`
+	StockUOM        string          `json:"stock_uom"`
+	IsStockItem     bool            `json:"is_stock_item"`
+	IsSalesItem     bool            `json:"is_sales_item"`
+	IsPurchaseItem  bool            `json:"is_purchase_item"`
+	IsFixedAsset    bool            `json:"is_fixed_asset"`
+	AssetCategoryID string          `json:"asset_category_id,omitempty"`
+	StandardRate    decimal.Decimal `json:"standard_rate"`
+	CreatedAt       time.Time       `json:"created_at"`
+	UpdatedAt       time.Time       `json:"updated_at"`
+	Defaults        []ItemDefault   `json:"defaults,omitempty"`
 }
 
 type ItemDefault struct {
@@ -48,17 +50,19 @@ type ItemDefault struct {
 }
 
 type ItemCreateInput struct {
-	Code           string             `json:"code"`
-	Name           string             `json:"name"`
-	Description    string             `json:"description,omitempty"`
-	ItemGroupID    string             `json:"item_group_id,omitempty"`
-	StockUOM       string             `json:"stock_uom,omitempty"`
-	IsStockItem    bool               `json:"is_stock_item,omitempty"`
-	IsSalesItem    *bool              `json:"is_sales_item,omitempty"`
-	IsPurchaseItem *bool              `json:"is_purchase_item,omitempty"`
-	StandardRate   string             `json:"standard_rate,omitempty"`
-	CustomFields   map[string]any     `json:"custom_fields,omitempty"`
-	Defaults       []ItemDefaultInput `json:"defaults,omitempty"`
+	Code            string             `json:"code"`
+	Name            string             `json:"name"`
+	Description     string             `json:"description,omitempty"`
+	ItemGroupID     string             `json:"item_group_id,omitempty"`
+	StockUOM        string             `json:"stock_uom,omitempty"`
+	IsStockItem     bool               `json:"is_stock_item,omitempty"`
+	IsSalesItem     *bool              `json:"is_sales_item,omitempty"`
+	IsPurchaseItem  *bool              `json:"is_purchase_item,omitempty"`
+	IsFixedAsset    bool               `json:"is_fixed_asset,omitempty"`
+	AssetCategoryID string             `json:"asset_category_id,omitempty"`
+	StandardRate    string             `json:"standard_rate,omitempty"`
+	CustomFields    map[string]any     `json:"custom_fields,omitempty"`
+	Defaults        []ItemDefaultInput `json:"defaults,omitempty"`
 }
 
 type ItemDefaultInput struct {
@@ -115,19 +119,31 @@ func (s *Service) Create(ctx context.Context, in ItemCreateInput) (*Item, error)
 		if err != nil {
 			return err
 		}
+		var categoryOut *string
 		err = tx.QueryRow(ctx, `
 			INSERT INTO item (id, code, name, description, item_group_id, stock_uom,
-			                 is_stock_item, is_sales_item, is_purchase_item, standard_rate,
+			                 is_stock_item, is_sales_item, is_purchase_item,
+			                 is_fixed_asset, asset_category_id,
+			                 standard_rate,
 			                 custom_fields, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$12)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
 			RETURNING id, code, name, coalesce(description,''), coalesce(item_group_id,''),
-			          stock_uom, is_stock_item, is_sales_item, is_purchase_item, standard_rate,
+			          stock_uom, is_stock_item, is_sales_item, is_purchase_item,
+			          is_fixed_asset, asset_category_id,
+			          standard_rate,
 			          created_at, updated_at`,
 			id, in.Code, in.Name, nullable(in.Description), nullable(in.ItemGroupID), in.StockUOM,
-			in.IsStockItem, isSales, isPurchase, rate, cf, p.UserID).Scan(
+			in.IsStockItem, isSales, isPurchase,
+			in.IsFixedAsset, nullable(in.AssetCategoryID),
+			rate, cf, p.UserID).Scan(
 			&it.ID, &it.Code, &it.Name, &it.Description, &it.ItemGroupID,
-			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem, &it.StandardRate,
+			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem,
+			&it.IsFixedAsset, &categoryOut,
+			&it.StandardRate,
 			&it.CreatedAt, &it.UpdatedAt)
+		if categoryOut != nil {
+			it.AssetCategoryID = *categoryOut
+		}
 		if err != nil {
 			if dbx.IsUniqueViolation(err) {
 				return errors.New("item: duplicate code")
@@ -167,16 +183,18 @@ func (s *Service) Create(ctx context.Context, in ItemCreateInput) (*Item, error)
 // defaults — can be edited freely. Sub-tables are replaced wholesale (delete
 // then re-insert) inside the same tx; we do not attempt to diff them.
 type ItemUpdateInput struct {
-	Name           string             `json:"name"`
-	Description    string             `json:"description,omitempty"`
-	ItemGroupID    string             `json:"item_group_id,omitempty"`
-	StockUOM       string             `json:"stock_uom,omitempty"`
-	IsStockItem    bool               `json:"is_stock_item,omitempty"`
-	IsSalesItem    *bool              `json:"is_sales_item,omitempty"`
-	IsPurchaseItem *bool              `json:"is_purchase_item,omitempty"`
-	StandardRate   string             `json:"standard_rate,omitempty"`
-	CustomFields   map[string]any     `json:"custom_fields,omitempty"`
-	Defaults       []ItemDefaultInput `json:"defaults,omitempty"`
+	Name            string             `json:"name"`
+	Description     string             `json:"description,omitempty"`
+	ItemGroupID     string             `json:"item_group_id,omitempty"`
+	StockUOM        string             `json:"stock_uom,omitempty"`
+	IsStockItem     bool               `json:"is_stock_item,omitempty"`
+	IsSalesItem     *bool              `json:"is_sales_item,omitempty"`
+	IsPurchaseItem  *bool              `json:"is_purchase_item,omitempty"`
+	IsFixedAsset    bool               `json:"is_fixed_asset,omitempty"`
+	AssetCategoryID string             `json:"asset_category_id,omitempty"`
+	StandardRate    string             `json:"standard_rate,omitempty"`
+	CustomFields    map[string]any     `json:"custom_fields,omitempty"`
+	Defaults        []ItemDefaultInput `json:"defaults,omitempty"`
 }
 
 func (s *Service) Update(ctx context.Context, id string, in ItemUpdateInput) (*Item, error) {
@@ -227,20 +245,24 @@ func (s *Service) Update(ctx context.Context, id string, in ItemUpdateInput) (*I
 		}
 		_, err = tx.Exec(ctx, `
 			UPDATE item SET
-			  name             = $2,
-			  description      = $3,
-			  item_group_id    = $4,
-			  stock_uom        = $5,
-			  is_stock_item    = $6,
-			  is_sales_item    = $7,
-			  is_purchase_item = $8,
-			  standard_rate    = $9,
-			  custom_fields    = $10,
-			  updated_by       = $11,
-			  updated_at       = now()
+			  name              = $2,
+			  description       = $3,
+			  item_group_id     = $4,
+			  stock_uom         = $5,
+			  is_stock_item     = $6,
+			  is_sales_item     = $7,
+			  is_purchase_item  = $8,
+			  is_fixed_asset    = $9,
+			  asset_category_id = $10,
+			  standard_rate     = $11,
+			  custom_fields     = $12,
+			  updated_by        = $13,
+			  updated_at        = now()
 			WHERE id = $1 AND is_deleted = false`,
 			id, in.Name, nullable(in.Description), nullable(in.ItemGroupID), in.StockUOM,
-			in.IsStockItem, isSales, isPurchase, rate, cf, p.UserID)
+			in.IsStockItem, isSales, isPurchase,
+			in.IsFixedAsset, nullable(in.AssetCategoryID),
+			rate, cf, p.UserID)
 		if err != nil {
 			return err
 		}
@@ -271,18 +293,26 @@ func (s *Service) Update(ctx context.Context, id string, in ItemUpdateInput) (*I
 
 func (s *Service) Get(ctx context.Context, id string) (*Item, error) {
 	var it Item
+	var categoryOut *string
 	err := s.db.QueryRow(ctx, `
 		SELECT id, code, name, coalesce(description,''), coalesce(item_group_id,''),
-		       stock_uom, is_stock_item, is_sales_item, is_purchase_item, standard_rate, created_at, updated_at
+		       stock_uom, is_stock_item, is_sales_item, is_purchase_item,
+		       is_fixed_asset, asset_category_id,
+		       standard_rate, created_at, updated_at
 		FROM item WHERE id = $1 AND is_deleted = false`, id).
 		Scan(&it.ID, &it.Code, &it.Name, &it.Description, &it.ItemGroupID,
-			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem, &it.StandardRate,
+			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem,
+			&it.IsFixedAsset, &categoryOut,
+			&it.StandardRate,
 			&it.CreatedAt, &it.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("item %s not found", id)
 	}
 	if err != nil {
 		return nil, err
+	}
+	if categoryOut != nil {
+		it.AssetCategoryID = *categoryOut
 	}
 	rows, err := s.db.Query(ctx, `
 		SELECT company_id, coalesce(default_income_account_id,''), coalesce(default_expense_account_id,''),
@@ -305,7 +335,9 @@ func (s *Service) Get(ctx context.Context, id string) (*Item, error) {
 func (s *Service) List(ctx context.Context) ([]Item, error) {
 	rows, err := s.db.Query(ctx, `
 		SELECT id, code, name, coalesce(description,''), coalesce(item_group_id,''),
-		       stock_uom, is_stock_item, is_sales_item, is_purchase_item, standard_rate, created_at, updated_at
+		       stock_uom, is_stock_item, is_sales_item, is_purchase_item,
+		       is_fixed_asset, coalesce(asset_category_id, ''),
+		       standard_rate, created_at, updated_at
 		FROM item WHERE is_deleted = false ORDER BY code`)
 	if err != nil {
 		return nil, err
@@ -315,7 +347,9 @@ func (s *Service) List(ctx context.Context) ([]Item, error) {
 	for rows.Next() {
 		var it Item
 		if err := rows.Scan(&it.ID, &it.Code, &it.Name, &it.Description, &it.ItemGroupID,
-			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem, &it.StandardRate,
+			&it.StockUOM, &it.IsStockItem, &it.IsSalesItem, &it.IsPurchaseItem,
+			&it.IsFixedAsset, &it.AssetCategoryID,
+			&it.StandardRate,
 			&it.CreatedAt, &it.UpdatedAt); err != nil {
 			return nil, err
 		}
