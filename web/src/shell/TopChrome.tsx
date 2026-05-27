@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Search, Bell, Menu } from 'lucide-react';
+import { Search, Menu } from 'lucide-react';
 import { useUI } from '@/store/ui';
 import { Avatar } from '@/components/Avatar';
 import { Kbd } from '@/components/Kbd';
@@ -7,6 +7,7 @@ import {
   DropdownMenu, DropdownMenuTrigger, DropdownMenuContent,
   DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel,
 } from '@/components/DropdownMenu';
+import { NotificationsPopover } from '@/components/NotificationsPopover';
 import { logout, me } from '@/lib/auth';
 
 /**
@@ -48,12 +49,7 @@ export function TopChrome() {
       </button>
 
       <div className="ml-auto flex items-center gap-2">
-        <button
-          aria-label="Notifications"
-          className="inline-flex items-center justify-center size-8 rounded-full text-steel hover:bg-surface hover:text-ink transition-colors"
-        >
-          <Bell className="size-4" />
-        </button>
+        <NotificationsPopover />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

@@ -2,7 +2,7 @@ import { Link, useRouterState } from '@tanstack/react-router';
 import {
   Home, Receipt, ShoppingBag, Wallet, BarChart3, Package, Warehouse, Factory,
   Briefcase, Users, UserSquare, ClipboardList, Headphones, Settings, HelpCircle,
-  ChevronsLeft, Star, Sparkles, Plus, Building2, ChevronsUpDown,
+  ChevronsLeft, Star, Plus, Building2, ChevronsUpDown,
 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
@@ -122,16 +122,6 @@ export function Sidebar() {
 
       {/* Footer */}
       <div className="px-2 py-2 border-t border-hairline space-y-0.5">
-        {!sidebarCollapsed && (
-          <div className="mx-1 mb-2 p-3 rounded-lg bg-surface border border-hairline">
-            <div className="flex items-center gap-1.5 text-caption font-semibold text-ink mb-0.5">
-              <Sparkles className="size-3 text-brand-green" /> Phase 0 preview
-            </div>
-            <p className="text-caption text-stone leading-snug">
-              Design system + shell. Module UIs land next.
-            </p>
-          </div>
-        )}
         {[
           { to: '/settings', label: 'Settings', icon: Settings },
           { to: '/help',     label: 'Help',     icon: HelpCircle },

@@ -226,6 +226,32 @@ func (s *Service) MarkAllRead(ctx context.Context) error {
 	return err
 }
 
+// MarkRead flips a single notification to read. Scoped to the caller — a user
+// can only mark their own notifications.
+func (s *Service) MarkRead(ctx context.Context, id string) error {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return errors.New("notifications: unauthenticated")
+	}
+	_, err := s.db.Exec(ctx,
+		`UPDATE notification SET is_read = true, read_at = now()
+		 WHERE id = $1 AND user_id = $2 AND is_read = false`, id, p.UserID)
+	return err
+}
+
+// UnreadCount returns the count of unread notifications for the caller —
+// fed to the bell badge in the top chrome.
+func (s *Service) UnreadCount(ctx context.Context) (int, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return 0, errors.New("notifications: unauthenticated")
+	}
+	var n int
+	err := s.db.QueryRow(ctx,
+		`SELECT count(*) FROM notification WHERE user_id = $1 AND is_read = false`, p.UserID).Scan(&n)
+	return n, err
+}
+
 // ---- GLOBAL SEARCH ----
 
 type SearchHit struct {
@@ -385,6 +411,27 @@ func Register(api huma.API, h *Handler) {
 		return &struct{ Body map[string]string }{Body: map[string]string{"status": "ok"}}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "mark-notification-read", Method: http.MethodPost,
+		Path: "/notifications/{id}/read", Summary: "Mark a single notification as read",
+		Tags: []string{"Cross-cut / Notifications"},
+	}, func(ctx context.Context, in *ntfMarkIn) (*struct{ Body map[string]string }, error) {
+		if err := h.Service.MarkRead(ctx, in.ID); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &struct{ Body map[string]string }{Body: map[string]string{"status": "ok"}}, nil
+	})
+	huma.Register(api, huma.Operation{
+		OperationID: "notifications-unread-count", Method: http.MethodGet,
+		Path: "/notifications/unread-count", Summary: "Count unread notifications for the current user",
+		Tags: []string{"Cross-cut / Notifications"},
+	}, func(ctx context.Context, _ *struct{}) (*ntfCountOut, error) {
+		n, err := h.Service.UnreadCount(ctx)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &ntfCountOut{Body: ntfCountBody{Count: n}}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "global-search", Method: http.MethodGet,
 		Path: "/search", Summary: "Search across indexed documents",
 		Tags: []string{"Cross-cut / Search"},
@@ -425,6 +472,13 @@ type (
 	ntfListOut struct{ Body ntfListBody }
 	ntfListBody struct {
 		Items []Notification `json:"items"`
+	}
+	ntfMarkIn struct {
+		ID string `path:"id"`
+	}
+	ntfCountOut struct{ Body ntfCountBody }
+	ntfCountBody struct {
+		Count int `json:"count"`
 	}
 	searchIn struct {
 		Q     string `query:"q" required:"true"`
