@@ -8,41 +8,46 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 
+	"github.com/tandigital/logica-erp/internal/platform/auth"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
 )
 
-// TimelineEntry is a unified record across the three feeds shown on a doc's
-// form: events (writes), views (reads), and comments. Frontend renders them
-// by `kind`.
+// TimelineEntry is a unified record across four feeds: events (writes),
+// views (reads), comments, and workflow approvals. Frontend renders by `kind`.
+//
+// Diff payloads are populated only for system users (Principal.IsSystem) —
+// regular users see the high-level "Alice modified fields" line but not the
+// before/after JSON, which often contains sensitive financial deltas.
 type TimelineEntry struct {
-	Kind       string          `json:"kind"` // "event" | "view" | "comment"
+	Kind       string          `json:"kind"` // "event" | "view" | "comment" | "approval"
 	ID         string          `json:"id"`
 	OccurredAt time.Time       `json:"occurred_at"`
 	UserID     string          `json:"user_id"`
 	UserEmail  string          `json:"user_email,omitempty"`
 	UserName   string          `json:"user_name,omitempty"`
-	Action     string          `json:"action,omitempty"`  // event only
-	Diff       json.RawMessage `json:"diff,omitempty"`    // event only
-	Body       string          `json:"body,omitempty"`    // comment only
+	Action     string          `json:"action,omitempty"` // event: create/update/submit/... | approval: requested/approved/rejected
+	Diff       json.RawMessage `json:"diff,omitempty"`   // event only, system users only
+	Body       string          `json:"body,omitempty"`   // comment only, or approval decision_note
+	// Approval-only fields:
+	RuleName string `json:"rule_name,omitempty"`
 }
 
 type TimelineService struct{ db *dbx.DB }
 
 func NewTimelineService(db *dbx.DB) *TimelineService { return &TimelineService{db: db} }
 
-// Fetch returns the merged event+view+comment feed for one document, newest
-// first. Limit caps the per-feed slice (so a chatty viewer can't drown out
-// the events you actually want to see).
-func (s *TimelineService) Fetch(ctx context.Context, doctype, documentID string, limit int) ([]TimelineEntry, error) {
+// Fetch returns the merged event+view+comment+approval feed for one document.
+// Diff payloads are stripped for non-system callers (caller controls via the
+// includeDetails flag — the handler infers it from auth.Principal.IsSystem).
+func (s *TimelineService) Fetch(ctx context.Context, doctype, documentID string, limit int, includeDetails bool) ([]TimelineEntry, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
-	// Each feed is queried independently — three small, partition-pruned
-	// lookups — then merged in memory. This is much friendlier to the
-	// planner than a UNION ALL across three differently-shaped tables.
-	out := make([]TimelineEntry, 0, limit*3)
+	// Each feed is queried independently — small partition-pruned lookups
+	// then merged in memory. Friendlier to the planner than a UNION ALL.
+	out := make([]TimelineEntry, 0, limit*4)
 
 	evRows, err := s.db.Query(ctx, `
 		SELECT e.id, e.occurred_at, e.action, e.diff,
@@ -59,6 +64,9 @@ func (s *TimelineService) Fetch(ctx context.Context, doctype, documentID string,
 		if err := evRows.Scan(&e.ID, &e.OccurredAt, &e.Action, &e.Diff, &e.UserID, &e.UserEmail, &e.UserName); err != nil {
 			evRows.Close()
 			return nil, err
+		}
+		if !includeDetails {
+			e.Diff = nil
 		}
 		out = append(out, e)
 	}
@@ -102,6 +110,62 @@ func (s *TimelineService) Fetch(ctx context.Context, doctype, documentID string,
 	}
 	cmRows.Close()
 
+	// Approval feed: each approval_request row yields up to two timeline
+	// entries — "requested" (always) and "approved"/"rejected" (if decided).
+	apRows, err := s.db.Query(ctx, `
+		SELECT a.id, a.status, a.decision_note,
+		       a.requested_by, a.requested_at, coalesce(ur.email,''), coalesce(ur.full_name,''),
+		       a.decided_by,   a.decided_at,   coalesce(ud.email,''), coalesce(ud.full_name,''),
+		       coalesce(r.name, '')
+		FROM approval_request a
+		LEFT JOIN users         ur ON ur.id = a.requested_by
+		LEFT JOIN users         ud ON ud.id = a.decided_by
+		LEFT JOIN approval_rule r  ON r.id  = a.rule_id
+		WHERE a.doctype = $1 AND a.document_id = $2
+		ORDER BY a.requested_at DESC LIMIT $3`, doctype, documentID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for apRows.Next() {
+		var (
+			id, status, note         string
+			reqBy, reqEmail, reqName string
+			decEmail, decName        string
+			ruleName                 string
+			reqAt                    time.Time
+			decAt                    *time.Time
+			decByPtr                 *string
+		)
+		if err := apRows.Scan(&id, &status, &note,
+			&reqBy, &reqAt, &reqEmail, &reqName,
+			&decByPtr, &decAt, &decEmail, &decName,
+			&ruleName); err != nil {
+			apRows.Close()
+			return nil, err
+		}
+		// "Requested" is always emitted.
+		out = append(out, TimelineEntry{
+			Kind: "approval", ID: id + ":req",
+			OccurredAt: reqAt,
+			UserID:     reqBy, UserEmail: reqEmail, UserName: reqName,
+			Action:   "requested",
+			RuleName: ruleName,
+		})
+		// "Approved"/"Rejected" emitted only if decided.
+		if decAt != nil && status != "pending" && decByPtr != nil {
+			body := note
+			out = append(out, TimelineEntry{
+				Kind: "approval", ID: id + ":dec",
+				OccurredAt: *decAt,
+				UserID:     *decByPtr, UserEmail: decEmail, UserName: decName,
+				Action:   status, // "approved" or "rejected"
+				RuleName: ruleName,
+				Body:     body,
+			})
+		}
+	}
+	apRows.Close()
+
 	// Merge sort by occurred_at DESC. Slice is small (<= 3*limit) — no need
 	// for heap merge.
 	sortByOccurredAtDesc(out)
@@ -140,11 +204,16 @@ func RegisterTimeline(api huma.API, h *TimelineHandler) {
 		if err := h.Perm.Check(ctx, in.Doctype, permission.ActionRead); err != nil {
 			return nil, httpx.MapError(err)
 		}
-		entries, err := h.Service.Fetch(ctx, in.Doctype, in.DocumentID, in.Limit)
+		// Diff payloads (which can carry sensitive financial deltas) are
+		// only returned to system users. Regular users get the high-level
+		// timeline with no JSON.
+		p := auth.FromContext(ctx)
+		includeDetails := p != nil && p.IsSystem
+		entries, err := h.Service.Fetch(ctx, in.Doctype, in.DocumentID, in.Limit, includeDetails)
 		if err != nil {
 			return nil, httpx.MapError(err)
 		}
-		return &timelineOut{Body: timelineBody{Items: entries}}, nil
+		return &timelineOut{Body: timelineBody{Items: entries, CanViewDetails: includeDetails}}, nil
 	})
 }
 
@@ -156,6 +225,7 @@ type (
 	}
 	timelineOut  struct{ Body timelineBody }
 	timelineBody struct {
-		Items []TimelineEntry `json:"items"`
+		Items          []TimelineEntry `json:"items"`
+		CanViewDetails bool            `json:"can_view_details"`
 	}
 )

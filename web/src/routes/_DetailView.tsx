@@ -8,6 +8,7 @@ import { StatusPill } from '@/components/StatusPill';
 import { Skeleton } from '@/components/EmptyState';
 import { Timeline } from '@/components/Timeline';
 import { api } from '@/lib/api';
+import { me } from '@/lib/auth';
 import { money, date } from '@/lib/format';
 import { cn } from '@/lib/cn';
 import type { DoctypeConfig } from '@/lib/doctypes';
@@ -230,6 +231,9 @@ function prettifyKey(k: string): string {
 }
 
 function MetaRail({ record }: { record: Record<string, unknown> }) {
+  // Raw-JSON panel is only useful to operators — gate it behind is_system so
+  // regular users see a clean Meta card and nothing more.
+  const { data: caller } = useQuery({ queryKey: ['me'], queryFn: () => me() });
   const created = record.created_at as string | undefined;
   const updated = record.updated_at as string | undefined;
   return (
@@ -242,12 +246,14 @@ function MetaRail({ record }: { record: Record<string, unknown> }) {
           {updated && <Row label="Updated" value={date(updated)} icon={Calendar} />}
         </div>
       </Card>
-      <details className="rounded-lg border border-hairline bg-canvas">
-        <summary className="cursor-pointer px-4 py-3 text-body-sm text-charcoal">Raw JSON</summary>
-        <pre className="text-caption font-mono text-charcoal px-4 pb-4 overflow-auto max-h-[400px]">
-          {JSON.stringify(record, null, 2)}
-        </pre>
-      </details>
+      {caller?.is_system && (
+        <details className="rounded-lg border border-hairline bg-canvas">
+          <summary className="cursor-pointer px-4 py-3 text-body-sm text-charcoal">Raw JSON</summary>
+          <pre className="text-caption font-mono text-charcoal px-4 pb-4 overflow-auto max-h-[400px]">
+            {JSON.stringify(record, null, 2)}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }
