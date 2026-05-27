@@ -46,6 +46,16 @@ interface TemplateList { items: PrintTemplate[] }
 interface DoctypeDef { key: string; label: string; has_bundled: boolean }
 interface DoctypeList { items: DoctypeDef[] }
 
+// Fallback list — mirrors print.SupportedDoctypes server-side. The dropdown
+// uses this when the API list hasn't loaded yet (or returned empty) so the
+// user is never staring at an empty select.
+const FALLBACK_DOCTYPES: DoctypeDef[] = [
+  { key: 'sales_invoice',    label: 'Sales Invoice',    has_bundled: true  },
+  { key: 'purchase_invoice', label: 'Purchase Invoice', has_bundled: false },
+  { key: 'payment_entry',    label: 'Payment Entry',    has_bundled: false },
+  { key: 'journal_entry',    label: 'Journal Entry',    has_bundled: false },
+];
+
 type Tab = 'letterheads' | 'templates';
 
 export function PrintTemplatesSection() {
@@ -99,8 +109,8 @@ function TemplatesTab() {
         <div>
           <CardTitle>Print templates</CardTitle>
           <CardDescription>
-            HTML templates rendered to PDF when someone clicks Print on a document.
-            Go template syntax — variables like <span className="font-mono text-ink">{'{{.Invoice.Name}}'}</span> resolve at print time.
+            Customize how each document type looks when you print it or save it as a PDF.
+            Pick a document type, edit the design, and preview the result before saving.
           </CardDescription>
         </div>
         <Button size="sm" onClick={() => setCreateOpen(true)}>
@@ -114,9 +124,9 @@ function TemplatesTab() {
         <Card>
           <div className="text-center py-8">
             <FileType className="mx-auto size-6 text-stone mb-2" />
-            <div className="text-body-sm text-charcoal">No custom templates yet — print uses the bundled defaults.</div>
+            <div className="text-body-sm text-charcoal">No custom templates yet — printing falls back to the built-in defaults.</div>
             <Button size="sm" className="mt-4" onClick={() => setCreateOpen(true)}>
-              <Plus className="size-3.5" /> Create from bundled
+              <Plus className="size-3.5" /> Create your first
             </Button>
           </div>
         </Card>
@@ -260,7 +270,7 @@ function TemplateEditor({
             </label>
           </div>
 
-          <Field label="HTML body" hint="Go text/template. Variables resolve from the document context at print time.">
+          <Field label="Template content" hint="Edit the layout below. Placeholders pull in real values from the document — company name, line items, totals, etc. — when it's printed.">
             <textarea
               className="input-base !h-auto !py-2 font-mono text-[12px] leading-snug"
               rows={20}
@@ -333,7 +343,7 @@ function PreviewPane({
       <div className="flex items-end justify-between gap-3">
         <div>
           <div className="label-base">Preview</div>
-          <div className="text-caption text-stone">Renders with built-in sample data via Gotenberg.</div>
+          <div className="text-caption text-stone">Uses sample data so you can see the layout.</div>
         </div>
         <Button size="sm" variant="secondary" onClick={() => render.mutate()} loading={render.isPending}>
           <RefreshCw className="size-3.5" /> Render
@@ -372,11 +382,25 @@ function CreateTemplateDialog({
   onClose: () => void;
   onCreated: (t: PrintTemplate) => void;
 }) {
-  const [doctype, setDoctype]   = useState(doctypes[0]?.key ?? 'sales_invoice');
+  // The select must always have entries. If the server's list hasn't arrived
+  // (or came back empty), fall back to the built-in list so the dropdown is
+  // never blank — that's the bug that made it look unselectable.
+  const effectiveDoctypes = doctypes.length > 0 ? doctypes : FALLBACK_DOCTYPES;
+
+  const [doctype, setDoctype]   = useState(effectiveDoctypes[0]!.key);
   const [name, setName]         = useState('Default — custom');
   const [letterheadId, setLh]   = useState(letterheads.find((l) => l.is_default)?.id ?? '');
   const [body, setBody]         = useState('');
   const [error, setError]       = useState<string | null>(null);
+
+  // If `doctypes` finishes loading after the dialog mounted, make sure the
+  // current selection is still a valid option — otherwise the select renders
+  // with no apparent match and the user can't tell what's selected.
+  useEffect(() => {
+    if (!effectiveDoctypes.some((d) => d.key === doctype)) {
+      setDoctype(effectiveDoctypes[0]!.key);
+    }
+  }, [effectiveDoctypes, doctype]);
 
   // Auto-fetch the bundled source when the user picks a doctype.
   const { data: bundled, isFetching } = useQuery({
@@ -417,9 +441,12 @@ function CreateTemplateDialog({
         <form onSubmit={(e) => { e.preventDefault(); setError(null); mut.mutate(); }}
           className="mt-4 space-y-3">
           <div className="grid sm:grid-cols-2 gap-3">
-            <Field label="Doctype">
+            <Field label="Document type">
               <NativeSelect value={doctype} onChange={onDoctypeChange}
-                options={doctypes.map((d) => ({ value: d.key, label: d.label + (d.has_bundled ? '' : ' (no bundled)') }))} />
+                options={effectiveDoctypes.map((d) => ({
+                  value: d.key,
+                  label: d.label + (d.has_bundled ? '' : ' (start from blank)'),
+                }))} />
             </Field>
             <Field label="Name">
               <Input value={name} onChange={(e) => setName(e.target.value)} />
@@ -429,7 +456,7 @@ function CreateTemplateDialog({
             <NativeSelect value={letterheadId} onChange={setLh}
               options={[{ value: '', label: '— None —' }, ...letterheads.map((l) => ({ value: l.id, label: l.name }))]} />
           </Field>
-          <Field label="Body HTML" hint={isFetching ? 'Loading bundled source…' : 'Pre-filled from the bundled template; edit before saving.'}>
+          <Field label="Template content" hint={isFetching ? 'Loading starter template…' : 'Starts from a built-in template — edit before saving.'}>
             <textarea className="input-base !h-auto !py-2 font-mono text-[12px] leading-snug"
               rows={12} value={body} onChange={(e) => setBody(e.target.value)} spellCheck={false} />
           </Field>
