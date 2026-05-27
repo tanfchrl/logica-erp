@@ -62,6 +62,43 @@ func init() {
 	register(Predicate{ID: "unpaid_purchase_invoices_due_soon", Run: unpaidPurchaseInvoicesDueSoon})
 	register(Predicate{ID: "aged_drafts_unsubmitted", Run: agedDraftsUnsubmitted})
 	register(Predicate{ID: "stale_leads_no_followup", Run: staleLeadsNoFollowup})
+	register(Predicate{ID: "po_overdue_receipt", Run: poOverdueReceipt})
+}
+
+// poOverdueReceipt: submitted POs whose required_by_date < today AND status
+// is one of the "to receive" buckets. Args: count.
+func poOverdueReceipt(ctx context.Context, cc erpclient.CallContext) (Match, error) {
+	items, err := listItems(ctx, cc, "/accounting/purchase-orders")
+	if err != nil {
+		return Match{}, err
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	var count int
+	for _, it := range items {
+		ds, _ := it["docstatus"].(float64)
+		if int(ds) != 1 {
+			continue
+		}
+		status, _ := it["status"].(string)
+		// Only flag POs still expecting a receipt. Don't pester for ones
+		// that are intentionally on-hold or closed.
+		switch status {
+		case "To Receive", "To Receive and Bill":
+		default:
+			continue
+		}
+		req := stringField(it, "required_by_date")
+		if len(req) < 10 {
+			continue
+		}
+		if req[:10] < today {
+			count++
+		}
+	}
+	if count == 0 {
+		return Match{}, nil
+	}
+	return Match{Matches: true, Args: map[string]any{"count": count}}, nil
 }
 
 // overdueSalesInvoices: count submitted SIs whose due_date < today AND

@@ -169,6 +169,37 @@ const salesInvoices: DoctypeConfig = {
   ],
 };
 
+// PO status pill — ERPNext-style "what to do next" labels so the list view
+// reads as a worklist, not just a doctype dump.
+function POStatusPill({ value }: { value: string }) {
+  switch (value) {
+    case 'Draft':                return <StatusPill tone="neutral" withDot={false}>Draft</StatusPill>;
+    case 'To Receive and Bill':  return <StatusPill tone="warning" withDot={false}>To Receive &amp; Bill</StatusPill>;
+    case 'To Receive':           return <StatusPill tone="info"    withDot={false}>To Receive</StatusPill>;
+    case 'To Bill':              return <StatusPill tone="info"    withDot={false}>To Bill</StatusPill>;
+    case 'Completed':            return <StatusPill tone="success" withDot={false}>Completed</StatusPill>;
+    case 'On Hold':              return <StatusPill tone="warning" withDot={false}>On Hold</StatusPill>;
+    case 'Closed':               return <StatusPill tone="neutral" withDot={false}>Closed</StatusPill>;
+    case 'Stopped':              return <StatusPill tone="danger"  withDot={false}>Stopped</StatusPill>;
+    case 'Cancelled':            return <StatusPill tone="danger"  withDot={false}>Cancelled</StatusPill>;
+    default:                     return <StatusPill tone="neutral" withDot={false}>{value || '—'}</StatusPill>;
+  }
+}
+
+const purchaseOrders: DoctypeConfig = {
+  slug: 'purchase-orders', modulePath: '/accounting', module: 'Procurement',
+  doctype: 'purchase_order', title: 'Purchase Orders', singular: 'Purchase Order', icon: ClipboardList,
+  endpoint: '/accounting/purchase-orders',
+  columns: [
+    codeCol('name', 'No.'),
+    dateCol('transaction_date', 'Order date'),
+    dateCol('required_by_date', 'Required by'),
+    partyCol('supplier_id', 'Supplier'),
+    moneyCol('grand_total', 'Grand total'),
+    { accessorKey: 'status', header: 'Status', cell: (i) => <POStatusPill value={i.getValue<string>()} /> },
+  ],
+};
+
 const purchaseInvoices: DoctypeConfig = {
   slug: 'purchase-invoices', modulePath: '/accounting', module: 'Finance',
   doctype: 'purchase_invoice', title: 'Purchase Invoices', singular: 'Purchase Invoice', icon: ShoppingBag,
@@ -355,7 +386,7 @@ const issues: DoctypeConfig = {
 
 export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
-  salesInvoices, purchaseInvoices, paymentEntries, journalEntries,
+  salesInvoices, purchaseOrders, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
   employees, leads, projects, boms, workOrders, assets, issues,
 };
@@ -374,8 +405,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/buying', name: 'Procurement', icon: ShoppingBag,
-    description: 'Suppliers, purchase invoices, and procurement workflow.',
-    doctypes: [purchaseInvoices, suppliers, items],
+    description: 'Suppliers, purchase orders, receipts, and bills.',
+    doctypes: [purchaseOrders, purchaseInvoices, suppliers, items],
   },
   {
     path: '/selling', name: 'Sales', icon: BarChart3,

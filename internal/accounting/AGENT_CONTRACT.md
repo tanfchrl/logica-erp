@@ -45,6 +45,12 @@ documents:
     tier0_tools: [list_with_filters, get_by_id]
     tier1_tools: [create_draft]
     tier2_tools: []
+  - name: purchase_order
+    display_name: "Purchase Order"
+    api_path: "/accounting/purchase-orders"
+    tier0_tools: [list_with_filters, get_by_id]
+    tier1_tools: [create_draft]
+    tier2_tools: []
   - name: journal_entry
     display_name: "Journal Entry"
     api_path: "/accounting/journal-entries"
@@ -94,6 +100,12 @@ nudge_rules:
     cta_label: "Lihat drafts"
     cta_prompt: "Tampilkan semua draft yang belum di-submit lebih dari 3 hari."
     priority: normal
+  - id: po_overdue_receipt
+    condition: po_overdue_receipt
+    message_template: "{count} Purchase Order melewati tanggal required_by tapi belum diterima penuh."
+    cta_label: "Lihat PO"
+    cta_prompt: "Tampilkan Purchase Order yang melewati tanggal pengiriman tapi belum diterima."
+    priority: high
 ---
 
 # Modul Akuntansi
