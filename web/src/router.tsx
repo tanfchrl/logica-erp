@@ -18,6 +18,7 @@ import { JournalEntryForm } from './routes/JournalEntryForm';
 import { ReportsPage } from './routes/Reports';
 import { CreateFormPage } from './routes/CreateFormPage';
 import { DetailView } from './routes/_DetailView';
+import { MigrationWizard, MigrationWizardEntry } from './routes/MigrationWizard';
 import { doctypes, modules } from './lib/doctypes';
 import { getCreateSchema } from './lib/createSchema';
 
@@ -40,6 +41,21 @@ const appRoute = createRoute({
   },
   component: AppShell,
 });
+
+// Setup wizard runs full-screen, no AppShell — auth-gated but no sidebar.
+const setupParent = createRoute({
+  getParentRoute: () => rootRoute,
+  id: 'setup-parent',
+  beforeLoad: async () => {
+    if (!getAccessToken()) {
+      const r = await refresh();
+      if (!r) throw redirect({ to: '/login' });
+    }
+  },
+  component: Outlet,
+});
+const setupEntryRoute  = createRoute({ getParentRoute: () => setupParent, path: '/setup',              component: MigrationWizardEntry });
+const setupSessionRoute = createRoute({ getParentRoute: () => setupParent, path: '/setup/$sessionId',  component: MigrationWizard });
 
 // Static routes
 const dashboardRoute = createRoute({ getParentRoute: () => appRoute, path: '/',                          component: DashboardPage });
@@ -142,6 +158,7 @@ const helpRoute = createRoute({ getParentRoute: () => appRoute, path: '/help', c
 
 const routeTree = rootRoute.addChildren([
   loginRoute,
+  setupParent.addChildren([setupEntryRoute, setupSessionRoute]),
   appRoute.addChildren([
     dashboardRoute,
     itemsRoute,

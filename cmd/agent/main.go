@@ -30,6 +30,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/agent/approvals"
 	"github.com/tandigital/logica-erp/internal/agent/audit"
+	"github.com/tandigital/logica-erp/internal/agent/migration"
 	"github.com/tandigital/logica-erp/internal/agent/erpclient"
 	"github.com/tandigital/logica-erp/internal/agent/llm"
 	"github.com/tandigital/logica-erp/internal/agent/policy"
@@ -81,6 +82,7 @@ func main() {
 	erp := erpclient.New(erpBase)
 	toolReg := tools.New(erp, registry)
 	apvStore := approvals.New(db)
+	migrationSvc := migration.New(sessStore, erp)
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)
@@ -113,6 +115,7 @@ func main() {
 		registerChat(hapi, sessStore, rec, llmClient, registry, toolReg, gate, apvStore)
 		registerSessions(hapi, sessStore)
 		registerApprovals(hapi, apvStore, rec)
+		registerMigration(hapi, migrationSvc)
 	})
 
 	srv := &http.Server{
@@ -503,6 +506,124 @@ func buildSystemAndHistory(reg *agentcontract.Registry, history []session.Messag
 	return msgs
 }
 
+// registerMigration wires the implementation-wizard endpoints. The five-step
+// flow lives in internal/agent/migration; this handler is a thin REST surface
+// over it. Steps 3 (data migration) and 4 (opening balances) reuse existing
+// ERP endpoints (/admin/imports/* and /accounting/journal-entries) so they
+// aren't duplicated here.
+func registerMigration(api huma.API, svc *migration.Service) {
+	huma.Register(api, huma.Operation{
+		OperationID: "start-migration",
+		Method:      http.MethodPost,
+		Path:        "/migration/start",
+		Summary:     "Begin a new implementation wizard session for the caller",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *startMigrationIn) (*migrationSessionOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		sess, err := svc.Start(ctx, p.UserID, co, in.Body.Title)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &migrationSessionOut{Body: migrationSessionBody{SessionID: sess.ID, Title: sess.Title}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "get-migration-state",
+		Method:      http.MethodGet,
+		Path:        "/migration/{session_id}/state",
+		Summary:     "Read the wizard state — used by the FE to render the step tracker",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *migrationStateIn) (*migrationStateOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		st, err := svc.LoadState(ctx, p.UserID, in.SessionID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &migrationStateOut{Body: *st}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "save-migration-profile",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/profile",
+		Summary:     "Complete Step 1 by saving the SetupProfile",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *saveProfileIn) (*migrationStateOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		st, err := svc.SaveProfile(ctx, p.UserID, in.SessionID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &migrationStateOut{Body: *st}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "propose-coa",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/coa/propose",
+		Summary:     "Step 2: generate a PSAK-aligned Chart of Accounts proposal",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *migrationStateIn) (*coaProposeOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		proposal, err := svc.ProposeCOA(ctx, p.UserID, in.SessionID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &coaProposeOut{Body: coaProposeBody{Proposal: proposal}}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "accept-coa",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/coa/accept",
+		Summary:     "Step 2: confirm the COA proposal. Actual account creation is the caller's responsibility (loop through create_draft).",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *migrationStateIn) (*migrationStateOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		st, err := svc.AcceptCOA(ctx, p.UserID, in.SessionID)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &migrationStateOut{Body: *st}, nil
+	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "migration-readiness",
+		Method:      http.MethodGet,
+		Path:        "/migration/{session_id}/readiness",
+		Summary:     "Step 5: evaluate the go-live readiness checklist against current ERP state",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *migrationStateIn) (*readinessOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		cc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
+		checks, err := svc.Readiness(ctx, p.UserID, in.SessionID, cc)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &readinessOut{Body: readinessBody{Items: checks}}, nil
+	})
+}
+
 // ---- HTTP types ----
 
 type (
@@ -537,6 +658,33 @@ type (
 	}
 	approvalsActionOut struct {
 		Body map[string]string
+	}
+	startMigrationIn struct {
+		Body startMigrationBody
+	}
+	startMigrationBody struct {
+		Title string `json:"title,omitempty"`
+	}
+	migrationSessionOut  struct{ Body migrationSessionBody }
+	migrationSessionBody struct {
+		SessionID string `json:"session_id"`
+		Title     string `json:"title"`
+	}
+	migrationStateIn struct {
+		SessionID string `path:"session_id"`
+	}
+	migrationStateOut struct{ Body migration.State }
+	saveProfileIn     struct {
+		SessionID string `path:"session_id"`
+		Body      migration.SetupProfile
+	}
+	coaProposeOut  struct{ Body coaProposeBody }
+	coaProposeBody struct {
+		Proposal []migration.COAAccount `json:"proposal"`
+	}
+	readinessOut  struct{ Body readinessBody }
+	readinessBody struct {
+		Items []migration.Check `json:"items"`
 	}
 )
 
