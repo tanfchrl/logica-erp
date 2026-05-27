@@ -31,7 +31,6 @@ import (
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/ledger"
-	"github.com/tandigital/logica-erp/internal/platform/money"
 	"github.com/tandigital/logica-erp/internal/platform/naming"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
 	"github.com/tandigital/logica-erp/internal/platform/submittable"
@@ -53,6 +52,8 @@ type Asset struct {
 	ExpectedValueAfterUsefulLife       decimal.Decimal    `json:"expected_value_after_useful_life"`
 	UsefulLifeMonths                   int                `json:"useful_life_months"`
 	DepreciationMethod                 string             `json:"depreciation_method"`
+	DepreciationRatePct                decimal.Decimal    `json:"depreciation_rate_pct"`
+	ProRataBasis                       bool               `json:"pro_rata_basis"`
 	AssetAccountID                     string             `json:"asset_account_id"`
 	AccumulatedDepreciationAccountID   string             `json:"accumulated_depreciation_account_id"`
 	DepreciationExpenseAccountID       string             `json:"depreciation_expense_account_id"`
@@ -86,6 +87,8 @@ type AssetCreateInput struct {
 	ExpectedValueAfterUsefulLife       string `json:"expected_value_after_useful_life,omitempty"`
 	UsefulLifeMonths                   int    `json:"useful_life_months"`
 	DepreciationMethod                 string `json:"depreciation_method,omitempty"`
+	DepreciationRatePct                string `json:"depreciation_rate_pct,omitempty"`
+	ProRataBasis                       *bool  `json:"pro_rata_basis,omitempty" doc:"defaults to true (first row pro-rated)"`
 	AssetAccountID                     string `json:"asset_account_id"`
 	AccumulatedDepreciationAccountID   string `json:"accumulated_depreciation_account_id"`
 	DepreciationExpenseAccountID       string `json:"depreciation_expense_account_id"`
@@ -142,10 +145,24 @@ func (s *Service) Create(ctx context.Context, in AssetCreateInput) (*Asset, erro
 	}
 	method := in.DepreciationMethod
 	if method == "" {
-		method = "straight_line"
+		method = MethodStraightLine
 	}
-	if method != "straight_line" {
-		return nil, errors.New("depreciation_method: only straight_line is implemented in Phase 4 MVP")
+	switch method {
+	case MethodStraightLine, MethodWrittenDownValue, MethodManual:
+	default:
+		return nil, fmt.Errorf("depreciation_method: %q not supported", method)
+	}
+	rate := decimal.Zero
+	if strings.TrimSpace(in.DepreciationRatePct) != "" {
+		r, err := decimal.NewFromString(strings.TrimSpace(in.DepreciationRatePct))
+		if err != nil || r.IsNegative() {
+			return nil, errors.New("depreciation_rate_pct: must be a non-negative decimal")
+		}
+		rate = r
+	}
+	proRata := true
+	if in.ProRataBasis != nil {
+		proRata = *in.ProRataBasis
 	}
 	if in.AssetAccountID == "" || in.AccumulatedDepreciationAccountID == "" || in.DepreciationExpenseAccountID == "" {
 		return nil, errors.New("asset accounts: all three (asset, accumulated_dep, dep_expense) are required")
@@ -162,15 +179,21 @@ func (s *Service) Create(ctx context.Context, in AssetCreateInput) (*Asset, erro
 		if err != nil {
 			return err
 		}
+		var rateArg any
+		if rate.IsPositive() {
+			rateArg = rate
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO asset (
 				id, name, company_id, asset_name, asset_category_id, purchase_date,
 				gross_purchase_amount, expected_value_after_useful_life, useful_life_months, depreciation_method,
+				depreciation_rate_pct, pro_rata_basis,
 				asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, cost_center_id,
 				created_by, updated_by
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$15)`,
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$17)`,
 			id, name, in.CompanyID, in.AssetName, nullable(in.AssetCategoryID), pd,
 			gross, salvage, in.UsefulLifeMonths, method,
+			rateArg, proRata,
 			in.AssetAccountID, in.AccumulatedDepreciationAccountID, in.DepreciationExpenseAccountID,
 			nullable(in.CostCenterID), p.UserID); err != nil {
 			return err
@@ -199,6 +222,8 @@ type AssetUpdateInput struct {
 	ExpectedValueAfterUsefulLife     string `json:"expected_value_after_useful_life,omitempty"`
 	UsefulLifeMonths                 int    `json:"useful_life_months"`
 	DepreciationMethod               string `json:"depreciation_method,omitempty"`
+	DepreciationRatePct              string `json:"depreciation_rate_pct,omitempty"`
+	ProRataBasis                     *bool  `json:"pro_rata_basis,omitempty"`
 	AssetAccountID                   string `json:"asset_account_id"`
 	AccumulatedDepreciationAccountID string `json:"accumulated_depreciation_account_id"`
 	DepreciationExpenseAccountID     string `json:"depreciation_expense_account_id"`
@@ -238,10 +263,24 @@ func (s *Service) Update(ctx context.Context, id string, in AssetUpdateInput) (*
 	}
 	method := in.DepreciationMethod
 	if method == "" {
-		method = "straight_line"
+		method = MethodStraightLine
 	}
-	if method != "straight_line" {
-		return nil, errors.New("depreciation_method: only straight_line is implemented in Phase 4 MVP")
+	switch method {
+	case MethodStraightLine, MethodWrittenDownValue, MethodManual:
+	default:
+		return nil, fmt.Errorf("depreciation_method: %q not supported", method)
+	}
+	rate := decimal.Zero
+	if strings.TrimSpace(in.DepreciationRatePct) != "" {
+		r, err := decimal.NewFromString(strings.TrimSpace(in.DepreciationRatePct))
+		if err != nil || r.IsNegative() {
+			return nil, errors.New("depreciation_rate_pct: must be a non-negative decimal")
+		}
+		rate = r
+	}
+	proRata := true
+	if in.ProRataBasis != nil {
+		proRata = *in.ProRataBasis
 	}
 	if in.AssetAccountID == "" || in.AccumulatedDepreciationAccountID == "" || in.DepreciationExpenseAccountID == "" {
 		return nil, errors.New("asset accounts: all three (asset, accumulated_dep, dep_expense) are required")
@@ -255,6 +294,10 @@ func (s *Service) Update(ctx context.Context, id string, in AssetUpdateInput) (*
 		if existing.Docstatus != submittable.Draft {
 			return fmt.Errorf("asset: cannot edit (docstatus=%d)", existing.Docstatus)
 		}
+		var rateArg any
+		if rate.IsPositive() {
+			rateArg = rate
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE asset SET
 			  asset_name                          = $2,
@@ -264,14 +307,17 @@ func (s *Service) Update(ctx context.Context, id string, in AssetUpdateInput) (*
 			  expected_value_after_useful_life    = $6,
 			  useful_life_months                  = $7,
 			  depreciation_method                 = $8,
-			  asset_account_id                    = $9,
-			  accumulated_depreciation_account_id = $10,
-			  depreciation_expense_account_id     = $11,
-			  cost_center_id                      = $12,
-			  updated_by                          = $13
+			  depreciation_rate_pct               = $9,
+			  pro_rata_basis                      = $10,
+			  asset_account_id                    = $11,
+			  accumulated_depreciation_account_id = $12,
+			  depreciation_expense_account_id     = $13,
+			  cost_center_id                      = $14,
+			  updated_by                          = $15
 			WHERE id = $1 AND docstatus = 0`,
 			id, in.AssetName, nullable(in.AssetCategoryID), pd,
 			gross, salvage, in.UsefulLifeMonths, method,
+			rateArg, proRata,
 			in.AssetAccountID, in.AccumulatedDepreciationAccountID, in.DepreciationExpenseAccountID,
 			nullable(in.CostCenterID), p.UserID); err != nil {
 			return err
@@ -306,29 +352,37 @@ func (s *Service) Submit(ctx context.Context, id string) (*Asset, error) {
 			}
 		}
 
-		// Generate schedule.
-		depreciable := a.GrossPurchaseAmount.Sub(a.ExpectedValueAfterUsefulLife)
-		monthlyAmount := depreciable.Div(decimal.NewFromInt(int64(a.UsefulLifeMonths))).Round(money.Precision)
-		acc := decimal.Zero
-		schedDate := a.PurchaseDate
-		for i := 0; i < a.UsefulLifeMonths; i++ {
-			schedDate = schedDate.AddDate(0, 1, 0)
-			amount := monthlyAmount
-			if i == a.UsefulLifeMonths-1 {
-				// Last row: snap to the exact remaining amount to avoid drift.
-				amount = depreciable.Sub(acc)
-			}
-			acc = acc.Add(amount)
+		// Generate the schedule through the pure helper so the same math is
+		// testable without a DB and so future methods (WDV / manual) flow
+		// through one code path.
+		rows, err := BuildSchedule(ScheduleParams{
+			Gross:               a.GrossPurchaseAmount,
+			Salvage:             a.ExpectedValueAfterUsefulLife,
+			UsefulLifeMonths:    a.UsefulLifeMonths,
+			Method:              a.DepreciationMethod,
+			PurchaseDate:        a.PurchaseDate,
+			ProRataBasis:        a.ProRataBasis,
+			DepreciationRatePct: a.DepreciationRatePct,
+		})
+		if err != nil {
+			return err
+		}
+		for _, r := range rows {
 			rid := dbx.NewIDWithPrefix("depsch")
 			if _, err := tx.Exec(ctx, `
 				INSERT INTO depreciation_schedule (id, asset_id, row_index, schedule_date, depreciation_amount, accumulated_after)
 				VALUES ($1,$2,$3,$4,$5,$6)`,
-				rid, a.ID, i+1, schedDate, amount, acc); err != nil {
+				rid, a.ID, r.RowIndex, r.ScheduleDate, r.DepreciationAmount, r.AccumulatedAfter); err != nil {
 				return err
 			}
 		}
 
-		nextDate := a.PurchaseDate.AddDate(0, 1, 0)
+		var nextDate time.Time
+		if len(rows) > 0 {
+			nextDate = rows[0].ScheduleDate
+		} else {
+			nextDate = a.PurchaseDate.AddDate(0, 1, 0)
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE asset SET docstatus = 1, status = 'Submitted', submitted_at = now(), submitted_by = $1,
 			       next_depreciation_date = $2, updated_by = $1
@@ -528,15 +582,18 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*Asset, error) {
 		assetCategoryID *string
 		costCenterID    *string
 		nextDate        *time.Time
+		rateOpt         *decimal.Decimal
 	)
 	err := tx.QueryRow(ctx, `
 		SELECT id, name, company_id, asset_name, asset_category_id, purchase_date,
 		       gross_purchase_amount, expected_value_after_useful_life, useful_life_months, depreciation_method,
+		       depreciation_rate_pct, pro_rata_basis,
 		       asset_account_id, accumulated_depreciation_account_id, depreciation_expense_account_id, cost_center_id,
 		       accumulated_depreciation, status, next_depreciation_date, docstatus, created_at, updated_at
 		FROM asset WHERE id = $1`, id).
 		Scan(&a.ID, &a.Name, &a.CompanyID, &a.AssetName, &assetCategoryID, &a.PurchaseDate,
 			&a.GrossPurchaseAmount, &a.ExpectedValueAfterUsefulLife, &a.UsefulLifeMonths, &a.DepreciationMethod,
+			&rateOpt, &a.ProRataBasis,
 			&a.AssetAccountID, &a.AccumulatedDepreciationAccountID, &a.DepreciationExpenseAccountID, &costCenterID,
 			&a.AccumulatedDepreciation, &a.Status, &nextDate, &a.Docstatus, &a.CreatedAt, &a.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -550,6 +607,9 @@ func load(ctx context.Context, tx pgx.Tx, id string) (*Asset, error) {
 	}
 	if costCenterID != nil {
 		a.CostCenterID = *costCenterID
+	}
+	if rateOpt != nil {
+		a.DepreciationRatePct = *rateOpt
 	}
 	a.NextDepreciationDate = nextDate
 
