@@ -537,6 +537,114 @@ func (s *Service) PostDepreciation(ctx context.Context, assetID string, asOf tim
 	return &out, err
 }
 
+// RunResult captures the outcome of a batch depreciation run. Each asset's
+// per-transaction failure is captured rather than aborting the run — one
+// asset with a missing fiscal year shouldn't block the other 49.
+type RunResult struct {
+	AsOf          time.Time      `json:"as_of"`
+	CompanyID     string         `json:"company_id"`
+	Processed     int            `json:"processed"`
+	TotalAmount   string         `json:"total_amount"`
+	AssetsPosted  []RunPostedRow `json:"assets_posted"`
+	AssetsFailed  []RunFailedRow `json:"assets_failed"`
+}
+type RunPostedRow struct {
+	AssetID   string `json:"asset_id"`
+	AssetName string `json:"asset_name"`
+	Amount    string `json:"amount"`
+	Rows      int    `json:"rows"`
+}
+type RunFailedRow struct {
+	AssetID   string `json:"asset_id"`
+	AssetName string `json:"asset_name"`
+	Error     string `json:"error"`
+}
+
+// RunDepreciation finds every submitted asset in the company whose
+// next_depreciation_date is on or before `asOf` and posts each one's due
+// rows via PostDepreciation. Per-asset errors are collected rather than
+// failing the whole batch.
+//
+// This is the manual month-end button. Future: a scheduled worker wrapping
+// the same method on the 1st of each month.
+func (s *Service) RunDepreciation(ctx context.Context, companyID string, asOf time.Time) (*RunResult, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("asset: unauthenticated")
+	}
+	if companyID == "" {
+		return nil, errors.New("asset: company_id required")
+	}
+
+	// Pick asset IDs in a single query, then drive PostDepreciation per
+	// asset so each gets its own transaction (one failure ≠ whole abort).
+	rows, err := s.db.Query(ctx, `
+		SELECT id, asset_name FROM asset
+		WHERE company_id = $1
+		  AND docstatus = 1
+		  AND next_depreciation_date IS NOT NULL
+		  AND next_depreciation_date <= $2
+		ORDER BY next_depreciation_date, name`, companyID, asOf)
+	if err != nil {
+		return nil, err
+	}
+	type candidate struct{ id, name string }
+	var todo []candidate
+	for rows.Next() {
+		var c candidate
+		if err := rows.Scan(&c.id, &c.name); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		todo = append(todo, c)
+	}
+	rows.Close()
+
+	out := &RunResult{
+		AsOf: asOf, CompanyID: companyID,
+		AssetsPosted: []RunPostedRow{}, AssetsFailed: []RunFailedRow{},
+	}
+	totalAmt := decimal.Zero
+
+	for _, c := range todo {
+		// Snapshot acc dep + remaining-row count before posting so we can
+		// report the delta cleanly.
+		var beforeAcc decimal.Decimal
+		var beforeRows int
+		if err := s.db.QueryRow(ctx,
+			`SELECT accumulated_depreciation FROM asset WHERE id = $1`, c.id).Scan(&beforeAcc); err != nil {
+			out.AssetsFailed = append(out.AssetsFailed, RunFailedRow{AssetID: c.id, AssetName: c.name, Error: err.Error()})
+			continue
+		}
+		if err := s.db.QueryRow(ctx, `
+			SELECT count(*) FROM depreciation_schedule
+			WHERE asset_id = $1 AND is_posted = false AND schedule_date <= $2`,
+			c.id, asOf).Scan(&beforeRows); err != nil {
+			out.AssetsFailed = append(out.AssetsFailed, RunFailedRow{AssetID: c.id, AssetName: c.name, Error: err.Error()})
+			continue
+		}
+		if beforeRows == 0 {
+			// next_depreciation_date may have been racy; skip silently.
+			continue
+		}
+
+		a, err := s.PostDepreciation(ctx, c.id, asOf)
+		if err != nil {
+			out.AssetsFailed = append(out.AssetsFailed, RunFailedRow{AssetID: c.id, AssetName: c.name, Error: err.Error()})
+			continue
+		}
+		amount := a.AccumulatedDepreciation.Sub(beforeAcc)
+		totalAmt = totalAmt.Add(amount)
+		out.AssetsPosted = append(out.AssetsPosted, RunPostedRow{
+			AssetID: a.ID, AssetName: a.AssetName,
+			Amount: amount.String(), Rows: beforeRows,
+		})
+		out.Processed++
+	}
+	out.TotalAmount = totalAmt.String()
+	return out, nil
+}
+
 func (s *Service) Get(ctx context.Context, id string) (*Asset, error) {
 	var out *Asset
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
@@ -755,6 +863,39 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &assetOut{Body: *a}, nil
 	})
+
+	// Batch depreciation run — wraps PostDepreciation across every eligible
+	// asset in the active company. Per-asset failures are collected, not
+	// raised, so the month-end button stays useful even if one asset is
+	// misconfigured.
+	huma.Register(api, huma.Operation{
+		OperationID: "run-asset-depreciation", Method: http.MethodPost,
+		Path: "/assets/depreciation-run", Summary: "Batch-post depreciation for every eligible asset",
+		Tags: []string{"Assets / Asset"},
+	}, func(ctx context.Context, in *depRunIn) (*depRunOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionSubmit); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		co := auth.CompanyFromContext(ctx)
+		if co == "" {
+			return nil, huma.NewError(http.StatusBadRequest, "X-Company-Id required")
+		}
+		var asOf time.Time
+		if in.AsOf == "" {
+			asOf = time.Now().UTC().Truncate(24 * time.Hour)
+		} else {
+			t, err := time.Parse("2006-01-02", in.AsOf)
+			if err != nil {
+				return nil, huma.NewError(http.StatusBadRequest, "as_of: "+err.Error())
+			}
+			asOf = t
+		}
+		r, err := h.Service.RunDepreciation(ctx, co, asOf)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &depRunOut{Body: *r}, nil
+	})
 }
 
 type (
@@ -767,6 +908,10 @@ type (
 		ID   string `path:"id"`
 		AsOf string `query:"as_of"`
 	}
+	depRunIn struct {
+		AsOf string `query:"as_of"  doc:"YYYY-MM-DD; defaults to today UTC"`
+	}
+	depRunOut struct{ Body RunResult }
 	assetUpdateIn struct {
 		ID   string `path:"id"`
 		Body AssetUpdateInput
