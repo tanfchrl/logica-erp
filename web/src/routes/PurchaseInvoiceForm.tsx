@@ -39,7 +39,7 @@ interface PurchaseInvoice {
 }
 interface Supplier  { id: string; name: string; display_name: string }
 interface Item      { id: string; code: string; name: string; stock_uom: string; standard_rate: string }
-interface Account   { id: string; name: string; account_number?: string; account_name?: string; root_type?: string }
+interface Account   { id: string; name: string; account_number?: string; account_name?: string; root_type?: string; is_group?: boolean }
 interface TaxTpl    { id: string; name: string; is_sales: boolean }
 interface DraftLine {
   rowId: string;
@@ -88,12 +88,13 @@ export function PurchaseInvoiceForm() {
     queryFn:  () => api<{ items: Account[] }>('/accounting/accounts').then((r) => r.items),
   });
 
+  // Only leaf accounts (not group/parent) can be posted to. Filter for postability.
   const expenseAccounts = useMemo(
-    () => (accounts ?? []).filter((a) => a.root_type === 'expense'),
+    () => (accounts ?? []).filter((a) => a.root_type === 'expense' && !a.is_group),
     [accounts],
   );
   const payableAccounts = useMemo(
-    () => (accounts ?? []).filter((a) => a.root_type === 'liability'),
+    () => (accounts ?? []).filter((a) => a.root_type === 'liability' && !a.is_group),
     [accounts],
   );
 
@@ -163,6 +164,25 @@ export function PurchaseInvoiceForm() {
     return { net, grand: net };
   }, [lines]);
 
+  // Client-side validation. Returns a human list of issues, or [] if clean.
+  function validate(): string[] {
+    const issues: string[] = [];
+    if (!supplierID)       issues.push('Supplier is required.');
+    if (!payableAccountID) issues.push('Payable account is required.');
+    if (!postingDate)      issues.push('Posting date is required.');
+    if (lines.length === 0) issues.push('Add at least one line item.');
+    lines.forEach((l, i) => {
+      const n = i + 1;
+      if (!l.item_code)          issues.push(`Line ${n}: item is required.`);
+      if (!l.expense_account_id) issues.push(`Line ${n}: expense account is required.`);
+      const qty = Number(l.qty);
+      if (!Number.isFinite(qty) || qty <= 0) issues.push(`Line ${n}: quantity must be > 0.`);
+      const rate = Number(l.rate);
+      if (!Number.isFinite(rate) || rate < 0) issues.push(`Line ${n}: rate must be ≥ 0.`);
+    });
+    return issues;
+  }
+
   /* ---- mutations ---- */
   const createMutation = useMutation({
     mutationFn: () => api<PurchaseInvoice>('/accounting/purchase-invoices', {
@@ -194,8 +214,23 @@ export function PurchaseInvoiceForm() {
       void qc.invalidateQueries({ queryKey: ['list', 'purchase-invoices'] });
       void navigate({ to: `/accounting/purchase-invoices/${pi.id}` as never });
     },
-    onError: (e: Error) => setErr(e.message),
+    onError: (e: { message?: string; fields?: Record<string, string> } & Error) => {
+      const msg = e?.message ?? 'Server rejected the request.';
+      setErr(msg);
+      toast.error('Could not save draft', msg);
+    },
   });
+
+  function onSaveDraft() {
+    setErr(null);
+    const issues = validate();
+    if (issues.length > 0) {
+      setErr(issues.join(' '));
+      toast.error('Fix these first', issues[0]);
+      return;
+    }
+    createMutation.mutate();
+  }
 
   const submitMutation = useMutation({
     mutationFn: () => api<PurchaseInvoice>(`/accounting/purchase-invoices/${id}/submit`, { method: 'POST' }),
@@ -247,7 +282,7 @@ export function PurchaseInvoiceForm() {
               <Button variant="secondary" onClick={onPrint}><Printer className="size-4" /> Print PDF</Button>
             )}
             {editable && isNew && (
-              <Button onClick={() => createMutation.mutate()} loading={createMutation.isPending}>
+              <Button onClick={onSaveDraft} loading={createMutation.isPending}>
                 <Save className="size-4" /> Save draft <Kbd>⌘S</Kbd>
               </Button>
             )}
@@ -281,6 +316,13 @@ export function PurchaseInvoiceForm() {
 
           {!isNew && existing && (
             <ApprovalWidget doctype="purchase_invoice" documentId={existing.id} />
+          )}
+
+          {err && (
+            <Card className="!p-3 bg-brand-error/5 border-brand-error/30 flex items-start gap-2">
+              <AlertCircle className="size-4 text-brand-error mt-0.5 shrink-0" />
+              <div className="text-body-sm text-brand-error">{err}</div>
+            </Card>
           )}
 
           <Card>
@@ -447,12 +489,6 @@ export function PurchaseInvoiceForm() {
             </div>
           </Card>
 
-          {err && (
-            <Card className="!p-3 bg-brand-error/5 border-brand-error/30 flex items-start gap-2">
-              <AlertCircle className="size-4 text-brand-error mt-0.5 shrink-0" />
-              <span className="text-body-sm text-brand-error">{err}</span>
-            </Card>
-          )}
         </div>
       </motion.div>
     </>

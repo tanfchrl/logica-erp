@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from '@tanstack/react-router';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { Plus, Download, Filter, RefreshCw } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
 import { Button } from '@/components/Button';
@@ -26,12 +26,20 @@ interface ListViewProps {
  * Handles loading, empty, error, list rendering, and standard toolbar.
  */
 export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
+  const navigate = useNavigate();
   const { data, isLoading, isError, refetch, isFetching } = useQuery({
     queryKey: ['doctype', config.endpoint],
     queryFn: () => api<ListResponseShape>(config.endpoint),
   });
   const rows = (data?.items as any[] | undefined) ?? [];
   const newHref = config.newPath ?? `${config.modulePath}/${config.slug}/new`;
+
+  // Default row click: open the doctype detail page at /{module}/{slug}/{id}.
+  // Callers can pass their own onRowClick to override (e.g. open a side panel).
+  const handleRowClick = onRowClick ?? ((row: any) => {
+    const id = row?.id;
+    if (id) void navigate({ to: `${config.modulePath}/${config.slug}/${id}` as never });
+  });
 
   return (
     <>
@@ -63,7 +71,7 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
           data={rows}
           loading={isLoading}
           searchPlaceholder={`Search ${config.title.toLowerCase()}…`}
-          onRowClick={onRowClick}
+          onRowClick={handleRowClick}
           emptyState={
             isError ? (
               <EmptyState

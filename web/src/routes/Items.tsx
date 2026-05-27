@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate } from '@tanstack/react-router';
 import { type ColumnDef } from '@tanstack/react-table';
 import { Package, Plus, Download, Filter } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -29,6 +30,7 @@ interface ItemListResponse {
 }
 
 export function ItemsPage() {
+  const navigate = useNavigate();
   const { data, isLoading } = useQuery({
     queryKey: ['items'],
     queryFn: () => api<ItemListResponse>('/accounting/items'),
@@ -99,9 +101,11 @@ export function ItemsPage() {
           <>
             <Button variant="secondary"><Filter className="size-4" /> Filter</Button>
             <Button variant="secondary"><Download className="size-4" /> Export</Button>
-            <Button>
-              <Plus className="size-4" /> New item
-              <Kbd className="ml-1">N I</Kbd>
+            <Button asChild>
+              <Link to={'/accounting/items/new' as never}>
+                <Plus className="size-4" /> New item
+                <Kbd className="ml-1">N I</Kbd>
+              </Link>
             </Button>
           </>
         }
@@ -113,12 +117,19 @@ export function ItemsPage() {
           data={items}
           loading={isLoading}
           searchPlaceholder="Search by code, name, description…"
+          onRowClick={(row: Item) => void navigate({ to: `/accounting/items/${row.id}` as never })}
           emptyState={
             <EmptyState
               icon={Package}
               title="No items yet"
               description="Add your first item to start selling, buying, or tracking stock."
-              action={<Button><Plus className="size-4" /> New item</Button>}
+              action={
+                <Button asChild>
+                  <Link to={'/accounting/items/new' as never}>
+                    <Plus className="size-4" /> New item
+                  </Link>
+                </Button>
+              }
             />
           }
         />

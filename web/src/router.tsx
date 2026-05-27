@@ -17,6 +17,7 @@ import { PurchaseInvoiceForm } from './routes/PurchaseInvoiceForm';
 import { JournalEntryForm } from './routes/JournalEntryForm';
 import { ReportsPage } from './routes/Reports';
 import { CreateFormPage } from './routes/CreateFormPage';
+import { DetailView } from './routes/_DetailView';
 import { doctypes, modules } from './lib/doctypes';
 import { getCreateSchema } from './lib/createSchema';
 
@@ -93,6 +94,20 @@ const doctypeNewRoutes = Object.values(doctypes)
     });
   });
 
+// Auto-built /{id} detail routes for every non-bespoke doctype. SI/PI/JE have
+// their own bespoke forms at /$id that double as detail pages, so they're
+// skipped here.
+const doctypeDetailRoutes = Object.values(doctypes)
+  .filter((dt) => !BESPOKE_NEW.has(`${dt.modulePath}/${dt.slug}`) && !!getCreateSchema(dt.modulePath, dt.slug))
+  .map((dt) => {
+    const schema = getCreateSchema(dt.modulePath, dt.slug)!;
+    return createRoute({
+      getParentRoute: () => appRoute,
+      path: `${dt.modulePath}/${dt.slug}/$id`,
+      component: () => <DetailView config={dt} schema={schema} />,
+    });
+  });
+
 const moduleLandingRoutes = modules.map((m) =>
   createRoute({
     getParentRoute: () => appRoute,
@@ -124,6 +139,7 @@ const routeTree = rootRoute.addChildren([
     reportsIndex, reportsKind,
     ...doctypeListRoutes,
     ...doctypeNewRoutes,
+    ...doctypeDetailRoutes,
     ...moduleLandingRoutes,
     settingsIndexRoute, settingsSectionRoute, helpRoute,
   ]),
