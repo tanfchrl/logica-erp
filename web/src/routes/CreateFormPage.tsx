@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link, useNavigate } from '@tanstack/react-router';
+import { Link, useNavigate, useParams } from '@tanstack/react-router';
 import { motion } from 'framer-motion';
 import { ArrowLeft, Save, AlertTriangle, ExternalLink, Sparkles } from 'lucide-react';
 import { PageHeader } from '@/components/PageHeader';
@@ -19,12 +19,23 @@ import type { CreateSchema, FieldDef } from '@/lib/createSchema';
 interface CreateFormPageProps {
   config: DoctypeConfig;
   schema: CreateSchema;
+  /** When true, the route is /id/edit — load the record and switch to PUT. */
+  editMode?: boolean;
 }
 
-export function CreateFormPage({ config, schema }: CreateFormPageProps) {
+export function CreateFormPage({ config, schema, editMode = false }: CreateFormPageProps) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const listPath = `${config.modulePath}/${config.slug}`;
+  const { id } = useParams({ strict: false }) as { id?: string };
+  const editId = editMode ? id : undefined;
+
+  // Load existing record when in edit mode.
+  const { data: existing } = useQuery({
+    queryKey: ['doctype-detail', config.endpoint, editId],
+    queryFn:  () => api<Record<string, any>>(`${config.endpoint}/${editId}`),
+    enabled:  !!editId,
+  });
 
   // Seed default values
   const initial = useMemo(() => {
@@ -34,6 +45,19 @@ export function CreateFormPage({ config, schema }: CreateFormPageProps) {
   }, [schema]);
   const [values, setValues] = useState<Record<string, any>>(initial);
   const set = (name: string, v: any) => setValues((s) => ({ ...s, [name]: v }));
+
+  // Hydrate from existing record when it arrives.
+  useEffect(() => {
+    if (!existing) return;
+    const next: Record<string, any> = {};
+    for (const f of schema.fields) {
+      const v = existing[f.name];
+      if (v === undefined || v === null) continue;
+      // Date fields come back as ISO timestamps — keep only YYYY-MM-DD for date inputs.
+      next[f.name] = f.kind === 'date' && typeof v === 'string' ? v.slice(0, 10) : v;
+    }
+    setValues((s) => ({ ...s, ...next }));
+  }, [existing, schema]);
 
   // ---- needsChildTable: friendly stub ----
   if (schema.needsChildTable) {
@@ -93,8 +117,8 @@ export function CreateFormPage({ config, schema }: CreateFormPageProps) {
     );
   }
 
-  // ---- regular create form ----
-  const createMutation = useMutation({
+  // ---- regular create / edit form ----
+  const saveMutation = useMutation({
     mutationFn: () => {
       // Strip empty strings and undefineds so the server gets clean JSON.
       const body: Record<string, any> = {};
@@ -107,34 +131,47 @@ export function CreateFormPage({ config, schema }: CreateFormPageProps) {
           body[f.name] = v;
         }
       }
-      return api<any>(config.endpoint, { method: 'POST', body });
+      const url = editId ? `${config.endpoint}/${editId}` : config.endpoint;
+      return api<any>(url, { method: editId ? 'PUT' : 'POST', body });
     },
     onSuccess: (resp) => {
-      toast.success(`${config.singular} created`, resp?.name ?? resp?.id ?? '');
+      toast.success(`${config.singular} ${editId ? 'updated' : 'created'}`, resp?.name ?? resp?.id ?? '');
       qc.invalidateQueries({ queryKey: ['doctype', config.endpoint] });
-      if (schema.redirectTo && resp?.id) {
+      if (editId) qc.invalidateQueries({ queryKey: ['doctype-detail', config.endpoint, editId] });
+      if (editId && resp?.id) {
+        navigate({ to: `${listPath}/${resp.id}` as never });
+      } else if (schema.redirectTo && resp?.id) {
         navigate({ to: schema.redirectTo(resp.id) as never });
       } else {
         navigate({ to: listPath as never });
       }
     },
-    onError: (e: any) => toast.error('Create failed', e?.message ?? 'Check inputs / API logs'),
+    onError: (e: any) => toast.error(editId ? 'Update failed' : 'Create failed', e?.message ?? 'Check inputs / API logs'),
   });
 
   const missing = schema.fields.some((f) => f.required && !values[f.name]);
+  const recordTitle = (existing?.display_name ?? existing?.name ?? existing?.id ?? editId) as string | undefined;
 
   return (
     <>
       <PageHeader
-        crumbs={[{ label: config.module, to: config.modulePath }, { label: config.title, to: listPath }, { label: 'New' }]}
-        title={`New ${config.singular}`}
+        crumbs={[
+          { label: config.module, to: config.modulePath },
+          { label: config.title, to: listPath },
+          ...(editId
+            ? [{ label: recordTitle ?? '…', to: `${listPath}/${editId}` }, { label: 'Edit' }]
+            : [{ label: 'New' }]),
+        ]}
+        title={editId ? `Edit ${config.singular}` : `New ${config.singular}`}
         actions={
           <>
             <Button variant="ghost" asChild>
-              <Link to={listPath as never}><ArrowLeft className="size-4" /> Back</Link>
+              <Link to={(editId ? `${listPath}/${editId}` : listPath) as never}>
+                <ArrowLeft className="size-4" /> {editId ? 'Cancel' : 'Back'}
+              </Link>
             </Button>
-            <Button onClick={() => createMutation.mutate()} disabled={missing} loading={createMutation.isPending}>
-              <Save className="size-4" /> Create {config.singular}
+            <Button onClick={() => saveMutation.mutate()} disabled={missing} loading={saveMutation.isPending}>
+              <Save className="size-4" /> {editId ? 'Save changes' : `Create ${config.singular}`}
             </Button>
           </>
         }

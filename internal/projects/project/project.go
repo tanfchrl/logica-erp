@@ -15,6 +15,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/naming"
@@ -100,6 +101,73 @@ func (s *Service) Create(ctx context.Context, in ProjectCreateInput) (*Project, 
 		return audit.Record(ctx, tx, Doctype, pr.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
 	return &pr, err
+}
+
+// ProjectUpdateInput mirrors ProjectCreateInput. The internal name/code is
+// immutable; project_name, dates, status, customer linkage, and remarks can be
+// edited. Financial roll-ups (estimated_costing, totals) are maintained by
+// downstream processes and are not user-editable here.
+type ProjectUpdateInput struct {
+	ProjectName     string         `json:"project_name"`
+	CustomerID      string         `json:"customer_id,omitempty"`
+	Status          string         `json:"status,omitempty"`
+	StartDate       string         `json:"start_date,omitempty"`
+	ExpectedEndDate string         `json:"expected_end_date,omitempty"`
+	ActualEndDate   string         `json:"actual_end_date,omitempty"`
+	Remarks         string         `json:"remarks,omitempty"`
+	CustomFields    map[string]any `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in ProjectUpdateInput) (*Project, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("project: unauthenticated")
+	}
+	in.ProjectName = strings.TrimSpace(in.ProjectName)
+	if in.ProjectName == "" {
+		return nil, errors.New("project.project_name: required")
+	}
+	var before Project
+	if err := s.db.QueryRow(ctx, `SELECT id, status FROM project WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.Status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("project %s not found", id)
+		}
+		return nil, err
+	}
+	status := strings.TrimSpace(in.Status)
+	if status == "" {
+		status = before.Status
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE project SET
+			  project_name = $2,
+			  customer_id = $3,
+			  status = $4,
+			  start_date = $5,
+			  expected_end_date = $6,
+			  actual_end_date = $7,
+			  remarks = $8,
+			  custom_fields = $9,
+			  updated_by = $10
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.ProjectName, nullable(in.CustomerID), status,
+			nullableDate(in.StartDate), nullableDate(in.ExpectedEndDate), nullableDate(in.ActualEndDate),
+			nullable(in.Remarks), cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *Service) List(ctx context.Context, companyID string) ([]Project, error) {
@@ -228,6 +296,20 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &projOut{Body: *pr}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "update-project", Method: http.MethodPut,
+		Path: "/projects/projects/{id}", Summary: "Update a project",
+		Tags: []string{"Projects / Project"},
+	}, func(ctx context.Context, in *projUpdateIn) (*projOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		pr, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &projOut{Body: *pr}, nil
+	})
 }
 
 type (
@@ -239,5 +321,9 @@ type (
 	}
 	projGetIn struct {
 		ID string `path:"id"`
+	}
+	projUpdateIn struct {
+		ID   string `path:"id"`
+		Body ProjectUpdateInput
 	}
 )

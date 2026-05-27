@@ -17,6 +17,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
@@ -69,12 +70,26 @@ type TaxTemplateLine struct {
 }
 
 type TaxTemplateCreateInput struct {
-	CompanyID     string                       `json:"company_id,omitempty"`
-	Name          string                       `json:"name"`
-	IsSales       bool                         `json:"is_sales"`
-	IsDefault     bool                         `json:"is_default,omitempty"`
-	TaxCategoryID string                       `json:"tax_category_id,omitempty"`
-	Lines         []TaxTemplateLineInput       `json:"lines"`
+	CompanyID     string                 `json:"company_id,omitempty"`
+	Name          string                 `json:"name"`
+	IsSales       bool                   `json:"is_sales"`
+	IsDefault     bool                   `json:"is_default,omitempty"`
+	TaxCategoryID string                 `json:"tax_category_id,omitempty"`
+	CustomFields  map[string]any         `json:"custom_fields,omitempty"`
+	Lines         []TaxTemplateLineInput `json:"lines"`
+}
+
+// TaxTemplateUpdateInput mirrors TaxTemplateCreateInput minus the immutable
+// natural key (company_id + name). Lines are fully replaced on update: the
+// existing rows are deleted and the supplied rows are reinserted within the
+// same transaction.
+type TaxTemplateUpdateInput struct {
+	Name          string                 `json:"name"`
+	IsSales       bool                   `json:"is_sales"`
+	IsDefault     bool                   `json:"is_default,omitempty"`
+	TaxCategoryID string                 `json:"tax_category_id,omitempty"`
+	CustomFields  map[string]any         `json:"custom_fields,omitempty"`
+	Lines         []TaxTemplateLineInput `json:"lines"`
 }
 
 type TaxTemplateLineInput struct {
@@ -172,11 +187,15 @@ func (s *Service) CreateTemplate(ctx context.Context, in TaxTemplateCreateInput)
 	id := dbx.NewIDWithPrefix("txt")
 	var t TaxTemplate
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
-			INSERT INTO tax_template (id, company_id, name, is_sales, is_default, tax_category_id, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$7)
+		cf, err := customfield.EnsureTxValidator(ctx, tx, DoctypeTemplate, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO tax_template (id, company_id, name, is_sales, is_default, tax_category_id, custom_fields, created_by, updated_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8)
 			RETURNING id, company_id, name, is_sales, is_default, coalesce(tax_category_id,''), created_at, updated_at`,
-			id, in.CompanyID, in.Name, in.IsSales, in.IsDefault, nullable(in.TaxCategoryID), p.UserID).
+			id, in.CompanyID, in.Name, in.IsSales, in.IsDefault, nullable(in.TaxCategoryID), cf, p.UserID).
 			Scan(&t.ID, &t.CompanyID, &t.Name, &t.IsSales, &t.IsDefault, &t.TaxCategoryID, &t.CreatedAt, &t.UpdatedAt)
 		if err != nil {
 			if dbx.IsUniqueViolation(err) {
@@ -184,34 +203,102 @@ func (s *Service) CreateTemplate(ctx context.Context, in TaxTemplateCreateInput)
 			}
 			return err
 		}
-		for i, ln := range in.Lines {
-			rate, err := decimal.NewFromString(ln.Rate)
-			if err != nil {
-				return fmt.Errorf("tax_template.lines[%d].rate: %w", i, err)
-			}
-			if ln.AccountID == "" {
-				return fmt.Errorf("tax_template.lines[%d].account_id: required", i)
-			}
-			ct := ln.ChargeType
-			if ct == "" {
-				ct = string(tax.ChargeOnNetTotal)
-			}
-			lid := dbx.NewIDWithPrefix("txtl")
-			if _, err := tx.Exec(ctx, `
-				INSERT INTO tax_template_line (id, template_id, row_index, account_id, description, rate,
-				                               charge_type, included_in_basic_rate, cost_center_id)
-				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-				lid, t.ID, i+1, ln.AccountID, ln.Description, rate, ct, ln.IncludedInBasicRate, nullable(ln.CostCenterID)); err != nil {
-				return err
-			}
-			t.Lines = append(t.Lines, TaxTemplateLine{
-				ID: lid, RowIndex: i + 1, AccountID: ln.AccountID, Description: ln.Description,
-				Rate: rate, ChargeType: ct, IncludedInBasicRate: ln.IncludedInBasicRate, CostCenterID: ln.CostCenterID,
-			})
+		lines, err := insertTemplateLines(ctx, tx, t.ID, in.Lines)
+		if err != nil {
+			return err
 		}
+		t.Lines = lines
 		return audit.Record(ctx, tx, DoctypeTemplate, t.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
 	return &t, err
+}
+
+// insertTemplateLines validates and inserts the lines for a template. Shared
+// between Create and Update.
+func insertTemplateLines(ctx context.Context, tx pgx.Tx, templateID string, in []TaxTemplateLineInput) ([]TaxTemplateLine, error) {
+	out := make([]TaxTemplateLine, 0, len(in))
+	for i, ln := range in {
+		rate, err := decimal.NewFromString(ln.Rate)
+		if err != nil {
+			return nil, fmt.Errorf("tax_template.lines[%d].rate: %w", i, err)
+		}
+		if ln.AccountID == "" {
+			return nil, fmt.Errorf("tax_template.lines[%d].account_id: required", i)
+		}
+		ct := ln.ChargeType
+		if ct == "" {
+			ct = string(tax.ChargeOnNetTotal)
+		}
+		lid := dbx.NewIDWithPrefix("txtl")
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO tax_template_line (id, template_id, row_index, account_id, description, rate,
+			                               charge_type, included_in_basic_rate, cost_center_id)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+			lid, templateID, i+1, ln.AccountID, ln.Description, rate, ct,
+			ln.IncludedInBasicRate, nullable(ln.CostCenterID)); err != nil {
+			return nil, err
+		}
+		out = append(out, TaxTemplateLine{
+			ID: lid, RowIndex: i + 1, AccountID: ln.AccountID, Description: ln.Description,
+			Rate: rate, ChargeType: ct, IncludedInBasicRate: ln.IncludedInBasicRate, CostCenterID: ln.CostCenterID,
+		})
+	}
+	return out, nil
+}
+
+func (s *Service) UpdateTemplate(ctx context.Context, id string, in TaxTemplateUpdateInput) (*TaxTemplate, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("tax_template: unauthenticated")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errors.New("tax_template.name: required")
+	}
+	if len(in.Lines) == 0 {
+		return nil, errors.New("tax_template.lines: at least one required")
+	}
+	var existing TaxTemplate
+	if err := s.db.QueryRow(ctx, `SELECT id, company_id FROM tax_template WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&existing.ID, &existing.CompanyID); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("tax_template %s not found", id)
+		}
+		return nil, err
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, DoctypeTemplate, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE tax_template SET
+			  name = $2,
+			  is_sales = $3,
+			  is_default = $4,
+			  tax_category_id = $5,
+			  custom_fields = $6,
+			  updated_by = $7,
+			  updated_at = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.Name, in.IsSales, in.IsDefault, nullable(in.TaxCategoryID), cf, p.UserID); err != nil {
+			if dbx.IsUniqueViolation(err) {
+				return errors.New("tax_template: duplicate name in company")
+			}
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM tax_template_line WHERE template_id = $1`, id); err != nil {
+			return err
+		}
+		if _, err := insertTemplateLines(ctx, tx, id, in.Lines); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, DoctypeTemplate, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetTemplate(ctx, id)
 }
 
 func (s *Service) ListTemplates(ctx context.Context, companyID string) ([]TaxTemplate, error) {
@@ -437,6 +524,20 @@ func Register(api huma.API, h *Handler) {
 		return &txtCreateOut{Body: *t}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-tax-template", Method: http.MethodPut,
+		Path: "/accounting/tax-templates/{id}", Summary: "Update a tax template",
+		Tags: []string{"Accounting / Tax"},
+	}, func(ctx context.Context, in *txtUpdateIn) (*txtCreateOut, error) {
+		if err := h.Perm.Check(ctx, DoctypeTemplate, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		t, err := h.Service.UpdateTemplate(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &txtCreateOut{Body: *t}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "list-withholding-types", Method: http.MethodGet,
 		Path: "/accounting/withholding-tax-types", Summary: "List withholding tax types",
 		Tags: []string{"Accounting / Tax"},
@@ -481,6 +582,10 @@ type (
 	}
 	txtGetIn struct {
 		ID string `path:"id"`
+	}
+	txtUpdateIn struct {
+		ID   string `path:"id"`
+		Body TaxTemplateUpdateInput
 	}
 	whtCreateIn  struct{ Body WithholdingCreateInput }
 	whtCreateOut struct{ Body WithholdingTaxType }

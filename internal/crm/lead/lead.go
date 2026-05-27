@@ -15,6 +15,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/naming"
@@ -87,6 +88,71 @@ func (s *Service) Create(ctx context.Context, in LeadCreateInput) (*Lead, error)
 		return audit.Record(ctx, tx, Doctype, l.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
 	return &l, err
+}
+
+// LeadUpdateInput mirrors LeadCreateInput. The internal name/code is immutable;
+// all other fields including status and remarks can be edited.
+type LeadUpdateInput struct {
+	LeadName     string         `json:"lead_name"`
+	ContactEmail string         `json:"contact_email,omitempty"`
+	ContactPhone string         `json:"contact_phone,omitempty"`
+	Source       string         `json:"source,omitempty"`
+	Status       string         `json:"status,omitempty"`
+	TerritoryID  string         `json:"territory_id,omitempty"`
+	Remarks      string         `json:"remarks,omitempty"`
+	CustomFields map[string]any `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in LeadUpdateInput) (*Lead, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("lead: unauthenticated")
+	}
+	in.LeadName = strings.TrimSpace(in.LeadName)
+	if in.LeadName == "" {
+		return nil, errors.New("lead.lead_name: required")
+	}
+	var before Lead
+	if err := s.db.QueryRow(ctx, `SELECT id, status FROM lead WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.Status); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("lead %s not found", id)
+		}
+		return nil, err
+	}
+	status := strings.TrimSpace(in.Status)
+	if status == "" {
+		status = before.Status
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE lead SET
+			  lead_name = $2,
+			  contact_email = $3,
+			  contact_phone = $4,
+			  source = $5,
+			  status = $6,
+			  territory_id = $7,
+			  remarks = $8,
+			  custom_fields = $9,
+			  updated_by = $10
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.LeadName, nullable(in.ContactEmail), nullable(in.ContactPhone),
+			nullable(in.Source), status, nullable(in.TerritoryID), nullable(in.Remarks),
+			cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 // Convert turns a Lead into a Customer. Returns the new customer id and updates the lead.
@@ -278,6 +344,20 @@ func Register(api huma.API, h *Handler) {
 		return &leadOut{Body: *l}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-lead", Method: http.MethodPut,
+		Path: "/crm/leads/{id}", Summary: "Update a lead",
+		Tags: []string{"CRM / Lead"},
+	}, func(ctx context.Context, in *leadUpdateIn) (*leadOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		l, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &leadOut{Body: *l}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "convert-lead", Method: http.MethodPost,
 		Path: "/crm/leads/{id}/convert", Summary: "Convert a lead to a customer",
 		Tags: []string{"CRM / Lead"},
@@ -306,5 +386,9 @@ type (
 	leadConvertOut struct{ Body leadConvertBody }
 	leadConvertBody struct {
 		CustomerID string `json:"customer_id"`
+	}
+	leadUpdateIn struct {
+		ID   string `path:"id"`
+		Body LeadUpdateInput
 	}
 )

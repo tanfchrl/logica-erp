@@ -14,6 +14,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/naming"
@@ -129,6 +130,73 @@ func (s *Service) Create(ctx context.Context, in IssueCreateInput) (*Issue, erro
 		return audit.Record(ctx, tx, Doctype, iss.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
 	return &iss, err
+}
+
+// IssueUpdateInput mirrors IssueCreateInput. company_id is immutable; status
+// transitions go through the dedicated /status endpoint and are not editable
+// here. Subject, description, priority, assignee, customer linkage, contact
+// info, and SLA can be updated.
+type IssueUpdateInput struct {
+	Subject      string         `json:"subject"`
+	Description  string         `json:"description,omitempty"`
+	Priority     string         `json:"priority,omitempty"`
+	CustomerID   string         `json:"customer_id,omitempty"`
+	ContactEmail string         `json:"contact_email,omitempty"`
+	SLAID        string         `json:"sla_id,omitempty"`
+	AssignTo     string         `json:"assign_to,omitempty"`
+	CustomFields map[string]any `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in IssueUpdateInput) (*Issue, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("issue: unauthenticated")
+	}
+	in.Subject = strings.TrimSpace(in.Subject)
+	if in.Subject == "" {
+		return nil, errors.New("issue.subject: required")
+	}
+	var before Issue
+	if err := s.db.QueryRow(ctx, `SELECT id, priority FROM issue WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.Priority); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("issue %s not found", id)
+		}
+		return nil, err
+	}
+	priority := strings.TrimSpace(in.Priority)
+	if priority == "" {
+		priority = before.Priority
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE issue SET
+			  subject = $2,
+			  description = $3,
+			  priority = $4,
+			  customer_id = $5,
+			  contact_email = $6,
+			  sla_id = $7,
+			  assigned_to_user_id = $8,
+			  custom_fields = $9,
+			  updated_by = $10
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.Subject, nullable(in.Description), priority,
+			nullable(in.CustomerID), nullable(in.ContactEmail), nullable(in.SLAID),
+			nullable(in.AssignTo), cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 // UpdateStatus transitions an issue: Open → In Progress → Resolved → Closed.
@@ -269,6 +337,20 @@ func Register(api huma.API, h *Handler) {
 		return &issOut{Body: *i}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-issue", Method: http.MethodPut,
+		Path: "/support/issues/{id}", Summary: "Update an issue",
+		Tags: []string{"Support / Issue"},
+	}, func(ctx context.Context, in *issUpdateIn) (*issOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		i, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &issOut{Body: *i}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "update-issue-status", Method: http.MethodPost,
 		Path: "/support/issues/{id}/status", Summary: "Transition issue status",
 		Tags: []string{"Support / Issue"},
@@ -294,5 +376,9 @@ type (
 	issStatusIn struct {
 		ID   string            `path:"id"`
 		Body StatusUpdateInput `json:""`
+	}
+	issUpdateIn struct {
+		ID   string `path:"id"`
+		Body IssueUpdateInput
 	}
 )

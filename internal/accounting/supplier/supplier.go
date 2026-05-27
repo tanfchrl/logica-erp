@@ -142,6 +142,79 @@ func (s *Service) Create(ctx context.Context, in SupplierCreateInput) (*Supplier
 	return &sup, err
 }
 
+type SupplierUpdateInput struct {
+	DisplayName     string                 `json:"display_name"`
+	SupplierGroupID string                 `json:"supplier_group_id,omitempty"`
+	DefaultCurrency string                 `json:"default_currency,omitempty"`
+	NPWP            string                 `json:"npwp,omitempty"`
+	IsIndividual    bool                   `json:"is_individual,omitempty"`
+	Email           string                 `json:"email,omitempty"`
+	Phone           string                 `json:"phone,omitempty"`
+	CustomFields    map[string]any         `json:"custom_fields,omitempty"`
+	Defaults        []SupplierDefaultInput `json:"defaults,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in SupplierUpdateInput) (*Supplier, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("supplier: unauthenticated")
+	}
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	in.NPWP = strings.TrimSpace(in.NPWP)
+	if in.NPWP != "" && !npwpRegex.MatchString(in.NPWP) {
+		return nil, errors.New("supplier.npwp: must be 16 digits")
+	}
+	var beforeName string
+	if err := s.db.QueryRow(ctx, `SELECT name FROM supplier WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&beforeName); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("supplier %s not found", id)
+		}
+		return nil, err
+	}
+	if in.DisplayName == "" {
+		in.DisplayName = beforeName
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE supplier SET
+			  display_name = $2, supplier_group_id = $3, default_currency = $4,
+			  npwp = $5, is_individual = $6, email = $7, phone = $8,
+			  custom_fields = $9, updated_by = $10, updated_at = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.DisplayName, nullable(in.SupplierGroupID), nullable(in.DefaultCurrency),
+			nullable(in.NPWP), in.IsIndividual, nullable(in.Email), nullable(in.Phone),
+			cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		for _, d := range in.Defaults {
+			if d.CompanyID == "" {
+				return errors.New("supplier_default.company_id: required")
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO supplier_default (supplier_id, company_id, default_payable_account_id, default_currency, default_tax_template_id)
+				VALUES ($1,$2,$3,$4,$5)
+				ON CONFLICT (supplier_id, company_id) DO UPDATE SET
+				  default_payable_account_id = EXCLUDED.default_payable_account_id,
+				  default_currency           = EXCLUDED.default_currency,
+				  default_tax_template_id    = EXCLUDED.default_tax_template_id`,
+				id, d.CompanyID, nullable(d.DefaultPayableAccountID), nullable(d.DefaultCurrency), nullable(d.DefaultTaxTemplateID)); err != nil {
+				return err
+			}
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Get(ctx context.Context, id string) (*Supplier, error) {
 	var sup Supplier
 	err := s.db.QueryRow(ctx, `
@@ -254,6 +327,22 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &supplierCreateOut{Body: *sup}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "update-supplier",
+		Method:      http.MethodPut,
+		Path:        "/accounting/suppliers/{id}",
+		Summary:     "Update a supplier",
+		Tags:        []string{"Accounting / Supplier"},
+	}, func(ctx context.Context, in *supplierUpdateIn) (*supplierCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		sup, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &supplierCreateOut{Body: *sup}, nil
+	})
 }
 
 type (
@@ -265,6 +354,10 @@ type (
 	}
 	supplierGetIn struct {
 		ID string `path:"id"`
+	}
+	supplierUpdateIn struct {
+		ID   string `path:"id"`
+		Body SupplierUpdateInput
 	}
 )
 

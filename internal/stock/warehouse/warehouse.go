@@ -14,6 +14,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
@@ -35,13 +36,33 @@ type Warehouse struct {
 }
 
 type WarehouseCreateInput struct {
-	CompanyID     string `json:"company_id,omitempty"`
-	Name          string `json:"name"`
-	Code          string `json:"code,omitempty"`
-	ParentID      string `json:"parent_id,omitempty"`
-	IsGroup       bool   `json:"is_group,omitempty"`
-	WarehouseType string `json:"warehouse_type,omitempty"`
-	AccountID     string `json:"account_id,omitempty"`
+	CompanyID     string         `json:"company_id,omitempty"`
+	Name          string         `json:"name"`
+	Code          string         `json:"code,omitempty"`
+	ParentID      string         `json:"parent_id,omitempty"`
+	IsGroup       bool           `json:"is_group,omitempty"`
+	WarehouseType string         `json:"warehouse_type,omitempty"`
+	AccountID     string         `json:"account_id,omitempty"`
+	CustomFields  map[string]any `json:"custom_fields,omitempty"`
+}
+
+// WarehouseUpdateInput allows editing non-tree, non-natural-key fields of a
+// warehouse. The following are intentionally omitted and remain immutable
+// after creation:
+//
+//   - code: stable lookup key referenced by external systems.
+//   - parent_id: the warehouse table uses nested-set columns (lft, rgt)
+//     and there is no rebuild helper in this codebase. Re-parenting would
+//     leave lft/rgt inconsistent, so it is disallowed until a tree-rebuild
+//     utility is added.
+//   - is_group: changing a leaf into a group (or vice-versa) interacts with
+//     the same lft/rgt structure and is treated as a structural change.
+//   - company_id: warehouses are scoped to a company for life.
+type WarehouseUpdateInput struct {
+	Name          string         `json:"name"`
+	WarehouseType string         `json:"warehouse_type,omitempty"`
+	AccountID     string         `json:"account_id,omitempty"`
+	CustomFields  map[string]any `json:"custom_fields,omitempty"`
 }
 
 type Service struct{ db *dbx.DB }
@@ -67,13 +88,17 @@ func (s *Service) Create(ctx context.Context, in WarehouseCreateInput) (*Warehou
 	id := dbx.NewIDWithPrefix("wh")
 	var w Warehouse
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
-		err := tx.QueryRow(ctx, `
-			INSERT INTO warehouse (id, company_id, name, code, parent_id, is_group, warehouse_type, account_id, created_by, updated_by)
-			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9)
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO warehouse (id, company_id, name, code, parent_id, is_group, warehouse_type, account_id, custom_fields, created_by, updated_by)
+			VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$10)
 			RETURNING id, company_id, name, coalesce(code,''), coalesce(parent_id,''),
 			          is_group, coalesce(warehouse_type,''), coalesce(account_id,''), created_at, updated_at`,
 			id, in.CompanyID, in.Name, nullable(in.Code), nullable(in.ParentID), in.IsGroup,
-			nullable(in.WarehouseType), nullable(in.AccountID), p.UserID).
+			nullable(in.WarehouseType), nullable(in.AccountID), cf, p.UserID).
 			Scan(&w.ID, &w.CompanyID, &w.Name, &w.Code, &w.ParentID, &w.IsGroup, &w.WarehouseType, &w.AccountID, &w.CreatedAt, &w.UpdatedAt)
 		if err != nil {
 			if dbx.IsUniqueViolation(err) {
@@ -84,6 +109,53 @@ func (s *Service) Create(ctx context.Context, in WarehouseCreateInput) (*Warehou
 		return audit.Record(ctx, tx, Doctype, w.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
 	return &w, err
+}
+
+// Update edits a warehouse's mutable fields. Tree position (parent_id,
+// is_group, lft, rgt) and the immutable code/company_id are not touched;
+// changing them safely requires a nested-set rebuild helper that this
+// codebase does not yet provide.
+func (s *Service) Update(ctx context.Context, id string, in WarehouseUpdateInput) (*Warehouse, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("warehouse: unauthenticated")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errors.New("warehouse.name: required")
+	}
+	if err := s.db.QueryRow(ctx, `SELECT 1 FROM warehouse WHERE id = $1 AND is_deleted = false`, id).Scan(new(int)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("warehouse %s not found", id)
+		}
+		return nil, err
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE warehouse SET
+			  name = $2,
+			  warehouse_type = $3,
+			  account_id = $4,
+			  custom_fields = $5,
+			  updated_by = $6,
+			  updated_at = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.Name, nullable(in.WarehouseType), nullable(in.AccountID), cf, p.UserID); err != nil {
+			if dbx.IsUniqueViolation(err) {
+				return errors.New("warehouse: duplicate name in company")
+			}
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
 }
 
 func (s *Service) List(ctx context.Context, companyID string) ([]Warehouse, error) {
@@ -175,6 +247,20 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &whOut{Body: *w}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "update-warehouse", Method: http.MethodPut,
+		Path: "/stock/warehouses/{id}", Summary: "Update a warehouse",
+		Tags: []string{"Stock / Warehouse"},
+	}, func(ctx context.Context, in *whUpdateIn) (*whOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		w, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &whOut{Body: *w}, nil
+	})
 }
 
 type (
@@ -186,6 +272,10 @@ type (
 	}
 	whGetIn struct {
 		ID string `path:"id"`
+	}
+	whUpdateIn struct {
+		ID   string `path:"id"`
+		Body WarehouseUpdateInput
 	}
 )
 

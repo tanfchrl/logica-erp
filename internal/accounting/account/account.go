@@ -15,6 +15,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/auth"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/httpx"
 	"github.com/tandigital/logica-erp/internal/platform/permission"
@@ -103,6 +104,81 @@ func (s *Service) Create(ctx context.Context, in AccountCreateInput) (*Account, 
 	return &a, err
 }
 
+// AccountUpdateInput mirrors AccountCreateInput minus the immutable
+// account_number (the natural identifier used by GL/reports) and minus
+// parent_id. Reparenting requires rebuilding the lft/rgt nested-set indexes
+// for the whole subtree, and no helper for that exists yet — adding one
+// piecemeal here would corrupt the tree. When the tree-management helper
+// lands (Phase 1), expose ParentID here and call it before the UPDATE.
+// company_id and root_type stay immutable to avoid cross-company moves and
+// to keep the existing root-balance reports consistent.
+type AccountUpdateInput struct {
+	Name         string         `json:"name"`
+	IsGroup      bool           `json:"is_group,omitempty"`
+	AccountType  string         `json:"account_type,omitempty"`
+	CustomFields map[string]any `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in AccountUpdateInput) (*Account, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("account: unauthenticated")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errors.New("account.name: required")
+	}
+	var before Account
+	if err := s.db.QueryRow(ctx, `SELECT id, company_id, account_number FROM account WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.CompanyID, &before.AccountNumber); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("account %s not found", id)
+		}
+		return nil, err
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE account SET
+			  name          = $2,
+			  is_group      = $3,
+			  account_type  = $4,
+			  custom_fields = $5,
+			  updated_by    = $6,
+			  updated_at    = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.Name, in.IsGroup, nullable(in.AccountType), cf, p.UserID)
+		if err != nil {
+			if dbx.IsUniqueViolation(err) {
+				return errors.New("account: duplicate name within company")
+			}
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
+func (s *Service) Get(ctx context.Context, id string) (*Account, error) {
+	var a Account
+	err := s.db.QueryRow(ctx, `
+		SELECT id, company_id, name, coalesce(account_number,''), coalesce(parent_id,''),
+		       is_group, root_type, coalesce(account_type,''), account_currency, created_at, updated_at
+		FROM account WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&a.ID, &a.CompanyID, &a.Name, &a.AccountNumber, &a.ParentID, &a.IsGroup,
+			&a.RootType, &a.AccountType, &a.AccountCurrency, &a.CreatedAt, &a.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("account %s not found", id)
+	}
+	return &a, err
+}
+
 func (s *Service) List(ctx context.Context, companyID string) ([]Account, error) {
 	if companyID == "" {
 		return nil, errors.New("account: company_id required")
@@ -178,6 +254,23 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &accountCreateOut{Body: *a}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-account",
+		Method:      http.MethodPut,
+		Path:        "/accounting/accounts/{id}",
+		Summary:     "Update an account",
+		Tags:        []string{"Accounting / Account"},
+	}, func(ctx context.Context, in *accountUpdateIn) (*accountCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		a, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &accountCreateOut{Body: *a}, nil
+	})
 }
 
 type (
@@ -186,6 +279,10 @@ type (
 	accountListOut   struct{ Body AccountList }
 	AccountList  struct {
 		Items []Account `json:"items"`
+	}
+	accountUpdateIn struct {
+		ID   string `path:"id"`
+		Body AccountUpdateInput
 	}
 )
 

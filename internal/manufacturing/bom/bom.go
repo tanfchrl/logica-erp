@@ -174,6 +174,104 @@ func (s *Service) CreateDraft(ctx context.Context, in BOMCreateInput) (*BOM, err
 	return &out, err
 }
 
+// BOMUpdateInput is the set of fields editable on a Draft BOM. company_id and
+// item_id are immutable (they pin the doc to a finished good); the item rows
+// are replaced wholesale on every update.
+type BOMUpdateInput struct {
+	Quantity  string         `json:"quantity,omitempty"`
+	UOM       string         `json:"uom,omitempty"`
+	IsDefault bool           `json:"is_default,omitempty"`
+	Items     []BOMLineInput `json:"items"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in BOMUpdateInput) (*BOM, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("bom: unauthenticated")
+	}
+	if len(in.Items) == 0 {
+		return nil, errors.New("bom.items: at least one required")
+	}
+	qty := decimal.NewFromInt(1)
+	if in.Quantity != "" {
+		q, err := decimal.NewFromString(strings.TrimSpace(in.Quantity))
+		if err != nil || !q.IsPositive() {
+			return nil, errors.New("bom.quantity: must be > 0")
+		}
+		qty = q
+	}
+
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		existing, err := load(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if existing.Docstatus != submittable.Draft {
+			return fmt.Errorf("bom: cannot edit (docstatus=%d)", existing.Docstatus)
+		}
+		uom := in.UOM
+		if uom == "" {
+			if err := tx.QueryRow(ctx, `SELECT stock_uom FROM item WHERE id = $1`, existing.ItemID).Scan(&uom); err != nil {
+				return err
+			}
+		}
+		total := decimal.Zero
+		linesToInsert := make([]BOMLine, len(in.Items))
+		for i, l := range in.Items {
+			q, err := decimal.NewFromString(strings.TrimSpace(l.Qty))
+			if err != nil || !q.IsPositive() {
+				return fmt.Errorf("items[%d].qty: must be > 0", i)
+			}
+			rate := decimal.Zero
+			if l.Rate != "" {
+				rate, err = decimal.NewFromString(strings.TrimSpace(l.Rate))
+				if err != nil {
+					return fmt.Errorf("items[%d].rate: %w", i, err)
+				}
+			}
+			lu := l.UOM
+			if lu == "" {
+				if err := tx.QueryRow(ctx, `SELECT stock_uom FROM item WHERE id = $1`, l.ItemID).Scan(&lu); err != nil {
+					return err
+				}
+			}
+			amount := q.Mul(rate).Round(money.Precision)
+			total = total.Add(amount)
+			linesToInsert[i] = BOMLine{
+				ID: dbx.NewIDWithPrefix("bomi"), RowIndex: i + 1,
+				ItemID: l.ItemID, Qty: q, UOM: lu, Rate: rate, Amount: amount,
+			}
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE bom SET
+			  quantity   = $2,
+			  uom        = $3,
+			  is_default = $4,
+			  total_cost = $5,
+			  updated_by = $6
+			WHERE id = $1 AND docstatus = 0`,
+			id, qty, uom, in.IsDefault, total, p.UserID); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM bom_item WHERE bom_id = $1`, id); err != nil {
+			return err
+		}
+		for _, l := range linesToInsert {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO bom_item (id, bom_id, row_index, item_id, qty, uom, rate, amount)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				l.ID, id, l.RowIndex, l.ItemID, l.Qty, l.UOM, l.Rate, l.Amount); err != nil {
+				return err
+			}
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Submit(ctx context.Context, id string) (*BOM, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
@@ -291,6 +389,20 @@ func Register(api huma.API, h *Handler) {
 		return &bomOut{Body: *b}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-bom", Method: http.MethodPut,
+		Path: "/manufacturing/boms/{id}", Summary: "Update a BOM draft",
+		Tags: []string{"Manufacturing / BOM"},
+	}, func(ctx context.Context, in *bomUpdateIn) (*bomOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		b, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &bomOut{Body: *b}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "submit-bom", Method: http.MethodPost,
 		Path: "/manufacturing/boms/{id}/submit", Summary: "Submit a BOM",
 		Tags: []string{"Manufacturing / BOM"},
@@ -325,5 +437,9 @@ type (
 	bomOut      struct{ Body BOM }
 	bomGetIn    struct {
 		ID string `path:"id"`
+	}
+	bomUpdateIn struct {
+		ID   string `path:"id"`
+		Body BOMUpdateInput
 	}
 )

@@ -135,6 +135,104 @@ func (s *Service) CreateDraft(ctx context.Context, in WorkOrderCreateInput) (*Wo
 	return &out, err
 }
 
+// WorkOrderUpdateInput holds editable Draft fields. company_id and item_id are
+// immutable (item_id is denormalised from BOM at create time). bom_id may
+// change as long as the new BOM is submitted and belongs to the same company.
+type WorkOrderUpdateInput struct {
+	BOMID             string `json:"bom_id,omitempty"`
+	Qty               string `json:"qty"`
+	SourceWarehouseID string `json:"source_warehouse_id"`
+	TargetWarehouseID string `json:"target_warehouse_id"`
+	PlannedStartDate  string `json:"planned_start_date,omitempty"`
+	PlannedEndDate    string `json:"planned_end_date,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in WorkOrderUpdateInput) (*WorkOrder, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("work_order: unauthenticated")
+	}
+	if in.SourceWarehouseID == "" || in.TargetWarehouseID == "" {
+		return nil, errors.New("work_order: source_warehouse_id, target_warehouse_id required")
+	}
+	qty, err := decimal.NewFromString(strings.TrimSpace(in.Qty))
+	if err != nil || !qty.IsPositive() {
+		return nil, errors.New("work_order.qty: must be > 0")
+	}
+	var plannedStart, plannedEnd *time.Time
+	if in.PlannedStartDate != "" {
+		t, err := time.Parse("2006-01-02", in.PlannedStartDate)
+		if err != nil {
+			return nil, fmt.Errorf("planned_start_date: %w", err)
+		}
+		plannedStart = &t
+	}
+	if in.PlannedEndDate != "" {
+		t, err := time.Parse("2006-01-02", in.PlannedEndDate)
+		if err != nil {
+			return nil, fmt.Errorf("planned_end_date: %w", err)
+		}
+		plannedEnd = &t
+	}
+
+	err = s.db.Tx(ctx, func(tx pgx.Tx) error {
+		existing, err := load(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if existing.Docstatus != submittable.Draft {
+			return fmt.Errorf("work_order: cannot edit (docstatus=%d)", existing.Docstatus)
+		}
+		bomID := in.BOMID
+		itemID := existing.ItemID
+		if bomID == "" {
+			bomID = existing.BOMID
+		}
+		if bomID != existing.BOMID {
+			var (
+				bomItem      string
+				bomDocstatus int16
+			)
+			if err := tx.QueryRow(ctx,
+				`SELECT item_id, docstatus FROM bom WHERE id = $1`, bomID).
+				Scan(&bomItem, &bomDocstatus); err != nil {
+				return fmt.Errorf("bom: %w", err)
+			}
+			if bomDocstatus != 1 {
+				return errors.New("work_order: BOM must be submitted")
+			}
+			itemID = bomItem
+		}
+		var startParam, endParam any
+		if plannedStart != nil {
+			startParam = *plannedStart
+		}
+		if plannedEnd != nil {
+			endParam = *plannedEnd
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE work_order SET
+			  bom_id              = $2,
+			  item_id             = $3,
+			  qty                 = $4,
+			  source_warehouse_id = $5,
+			  target_warehouse_id = $6,
+			  planned_start_date  = $7,
+			  planned_end_date    = $8,
+			  updated_by          = $9
+			WHERE id = $1 AND docstatus = 0`,
+			id, bomID, itemID, qty, in.SourceWarehouseID, in.TargetWarehouseID,
+			startParam, endParam, p.UserID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Submit(ctx context.Context, id string) (*WorkOrder, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
@@ -382,6 +480,20 @@ func Register(api huma.API, h *Handler) {
 		return &woOut{Body: *w}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-work-order", Method: http.MethodPut,
+		Path: "/manufacturing/work-orders/{id}", Summary: "Update a Work Order draft",
+		Tags: []string{"Manufacturing / Work Order"},
+	}, func(ctx context.Context, in *woUpdateIn) (*woOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		w, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &woOut{Body: *w}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "submit-work-order", Method: http.MethodPost,
 		Path: "/manufacturing/work-orders/{id}/submit", Summary: "Submit a Work Order (consume raw → produce finished)",
 		Tags: []string{"Manufacturing / Work Order"},
@@ -416,5 +528,9 @@ type (
 	woOut      struct{ Body WorkOrder }
 	woGetIn    struct {
 		ID string `path:"id"`
+	}
+	woUpdateIn struct {
+		ID   string `path:"id"`
+		Body WorkOrderUpdateInput
 	}
 )

@@ -188,6 +188,102 @@ func (s *Service) Create(ctx context.Context, in AssetCreateInput) (*Asset, erro
 	return &out, err
 }
 
+// AssetUpdateInput holds editable Draft fields. company_id and name are
+// immutable. The depreciation schedule is generated on Submit, so updating
+// the financial inputs here just changes what gets baked in then.
+type AssetUpdateInput struct {
+	AssetName                        string `json:"asset_name"`
+	AssetCategoryID                  string `json:"asset_category_id,omitempty"`
+	PurchaseDate                     string `json:"purchase_date"`
+	GrossPurchaseAmount              string `json:"gross_purchase_amount"`
+	ExpectedValueAfterUsefulLife     string `json:"expected_value_after_useful_life,omitempty"`
+	UsefulLifeMonths                 int    `json:"useful_life_months"`
+	DepreciationMethod               string `json:"depreciation_method,omitempty"`
+	AssetAccountID                   string `json:"asset_account_id"`
+	AccumulatedDepreciationAccountID string `json:"accumulated_depreciation_account_id"`
+	DepreciationExpenseAccountID     string `json:"depreciation_expense_account_id"`
+	CostCenterID                     string `json:"cost_center_id,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in AssetUpdateInput) (*Asset, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("asset: unauthenticated")
+	}
+	in.AssetName = strings.TrimSpace(in.AssetName)
+	if in.AssetName == "" {
+		return nil, errors.New("asset.asset_name: required")
+	}
+	pd, err := time.Parse("2006-01-02", in.PurchaseDate)
+	if err != nil {
+		return nil, fmt.Errorf("purchase_date: %w", err)
+	}
+	gross, err := decimal.NewFromString(strings.TrimSpace(in.GrossPurchaseAmount))
+	if err != nil || !gross.IsPositive() {
+		return nil, errors.New("gross_purchase_amount: must be > 0")
+	}
+	salvage := decimal.Zero
+	if in.ExpectedValueAfterUsefulLife != "" {
+		s, err := decimal.NewFromString(strings.TrimSpace(in.ExpectedValueAfterUsefulLife))
+		if err != nil || s.IsNegative() {
+			return nil, errors.New("expected_value_after_useful_life: must be >= 0")
+		}
+		salvage = s
+	}
+	if salvage.GreaterThanOrEqual(gross) {
+		return nil, errors.New("expected_value_after_useful_life: must be < gross_purchase_amount")
+	}
+	if in.UsefulLifeMonths <= 0 {
+		return nil, errors.New("useful_life_months: must be > 0")
+	}
+	method := in.DepreciationMethod
+	if method == "" {
+		method = "straight_line"
+	}
+	if method != "straight_line" {
+		return nil, errors.New("depreciation_method: only straight_line is implemented in Phase 4 MVP")
+	}
+	if in.AssetAccountID == "" || in.AccumulatedDepreciationAccountID == "" || in.DepreciationExpenseAccountID == "" {
+		return nil, errors.New("asset accounts: all three (asset, accumulated_dep, dep_expense) are required")
+	}
+
+	err = s.db.Tx(ctx, func(tx pgx.Tx) error {
+		existing, err := load(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if existing.Docstatus != submittable.Draft {
+			return fmt.Errorf("asset: cannot edit (docstatus=%d)", existing.Docstatus)
+		}
+		if _, err := tx.Exec(ctx, `
+			UPDATE asset SET
+			  asset_name                          = $2,
+			  asset_category_id                   = $3,
+			  purchase_date                       = $4,
+			  gross_purchase_amount               = $5,
+			  expected_value_after_useful_life    = $6,
+			  useful_life_months                  = $7,
+			  depreciation_method                 = $8,
+			  asset_account_id                    = $9,
+			  accumulated_depreciation_account_id = $10,
+			  depreciation_expense_account_id     = $11,
+			  cost_center_id                      = $12,
+			  updated_by                          = $13
+			WHERE id = $1 AND docstatus = 0`,
+			id, in.AssetName, nullable(in.AssetCategoryID), pd,
+			gross, salvage, in.UsefulLifeMonths, method,
+			in.AssetAccountID, in.AccumulatedDepreciationAccountID, in.DepreciationExpenseAccountID,
+			nullable(in.CostCenterID), p.UserID); err != nil {
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Submit(ctx context.Context, id string) (*Asset, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
@@ -491,6 +587,20 @@ func Register(api huma.API, h *Handler) {
 		return &assetOut{Body: *a}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-asset", Method: http.MethodPut,
+		Path: "/assets/assets/{id}", Summary: "Update an Asset draft",
+		Tags: []string{"Assets / Asset"},
+	}, func(ctx context.Context, in *assetUpdateIn) (*assetOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		a, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &assetOut{Body: *a}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "submit-asset", Method: http.MethodPost,
 		Path: "/assets/assets/{id}/submit", Summary: "Submit an Asset (generates depreciation schedule)",
 		Tags: []string{"Assets / Asset"},
@@ -552,5 +662,9 @@ type (
 	depPostIn struct {
 		ID   string `path:"id"`
 		AsOf string `query:"as_of"`
+	}
+	assetUpdateIn struct {
+		ID   string `path:"id"`
+		Body AssetUpdateInput
 	}
 )

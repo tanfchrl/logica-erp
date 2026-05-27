@@ -161,6 +161,114 @@ func (s *Service) Create(ctx context.Context, in ItemCreateInput) (*Item, error)
 	return &it, err
 }
 
+// ItemUpdateInput mirrors ItemCreateInput. Code is immutable (it's the natural
+// key referenced by transactions); everything else — name, group, UOM,
+// valuation method, standard rate, flags, custom fields, and per-company
+// defaults — can be edited freely. Sub-tables are replaced wholesale (delete
+// then re-insert) inside the same tx; we do not attempt to diff them.
+type ItemUpdateInput struct {
+	Name           string             `json:"name"`
+	Description    string             `json:"description,omitempty"`
+	ItemGroupID    string             `json:"item_group_id,omitempty"`
+	StockUOM       string             `json:"stock_uom,omitempty"`
+	IsStockItem    bool               `json:"is_stock_item,omitempty"`
+	IsSalesItem    *bool              `json:"is_sales_item,omitempty"`
+	IsPurchaseItem *bool              `json:"is_purchase_item,omitempty"`
+	StandardRate   string             `json:"standard_rate,omitempty"`
+	CustomFields   map[string]any     `json:"custom_fields,omitempty"`
+	Defaults       []ItemDefaultInput `json:"defaults,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in ItemUpdateInput) (*Item, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("item: unauthenticated")
+	}
+	in.Name = strings.TrimSpace(in.Name)
+	if in.Name == "" {
+		return nil, errors.New("item.name: required")
+	}
+	if in.StockUOM == "" {
+		in.StockUOM = "Unit"
+	}
+	rate := decimal.Zero
+	if in.StandardRate != "" {
+		r, err := decimal.NewFromString(in.StandardRate)
+		if err != nil {
+			return nil, fmt.Errorf("item.standard_rate: %w", err)
+		}
+		if r.IsNegative() {
+			return nil, errors.New("item.standard_rate: must be >= 0")
+		}
+		rate = r.Round(4)
+	}
+	isSales := true
+	if in.IsSalesItem != nil {
+		isSales = *in.IsSalesItem
+	}
+	isPurchase := true
+	if in.IsPurchaseItem != nil {
+		isPurchase = *in.IsPurchaseItem
+	}
+
+	var before Item
+	if err := s.db.QueryRow(ctx, `SELECT id, code FROM item WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.Code); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("item %s not found", id)
+		}
+		return nil, err
+	}
+
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE item SET
+			  name             = $2,
+			  description      = $3,
+			  item_group_id    = $4,
+			  stock_uom        = $5,
+			  is_stock_item    = $6,
+			  is_sales_item    = $7,
+			  is_purchase_item = $8,
+			  standard_rate    = $9,
+			  custom_fields    = $10,
+			  updated_by       = $11,
+			  updated_at       = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.Name, nullable(in.Description), nullable(in.ItemGroupID), in.StockUOM,
+			in.IsStockItem, isSales, isPurchase, rate, cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		// Replace sub-table rows wholesale: delete then re-insert within the tx.
+		// item_price and item_uom tables don't exist in the current schema; if
+		// they get added later, mirror this same delete-then-insert pattern.
+		if _, err := tx.Exec(ctx, `DELETE FROM item_default WHERE item_id = $1`, id); err != nil {
+			return err
+		}
+		for _, d := range in.Defaults {
+			if d.CompanyID == "" {
+				return errors.New("item_default.company_id: required")
+			}
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO item_default (item_id, company_id, default_income_account_id, default_expense_account_id, default_tax_template_id)
+				VALUES ($1,$2,$3,$4,$5)`,
+				id, d.CompanyID, nullable(d.DefaultIncomeAccountID), nullable(d.DefaultExpenseAccountID), nullable(d.DefaultTaxTemplateID)); err != nil {
+				return err
+			}
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Get(ctx context.Context, id string) (*Item, error) {
 	var it Item
 	err := s.db.QueryRow(ctx, `
@@ -289,6 +397,22 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &itemCreateOut{Body: *it}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "update-item",
+		Method:      http.MethodPut,
+		Path:        "/accounting/items/{id}",
+		Summary:     "Update an item",
+		Tags:        []string{"Accounting / Item"},
+	}, func(ctx context.Context, in *itemUpdateIn) (*itemCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		it, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &itemCreateOut{Body: *it}, nil
+	})
 }
 
 type (
@@ -300,6 +424,10 @@ type (
 	}
 	itemGetIn struct {
 		ID string `path:"id"`
+	}
+	itemUpdateIn struct {
+		ID   string `path:"id"`
+		Body ItemUpdateInput
 	}
 )
 

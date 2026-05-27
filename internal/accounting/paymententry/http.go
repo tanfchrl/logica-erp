@@ -64,6 +64,20 @@ func Register(api huma.API, h *Handler) {
 		return &peOut{Body: *pe}, nil
 	})
 	huma.Register(api, huma.Operation{
+		OperationID: "update-payment-entry", Method: http.MethodPut,
+		Path: "/accounting/payment-entries/{id}", Summary: "Update a Payment Entry draft",
+		Tags: []string{"Accounting / Payment Entry"},
+	}, func(ctx context.Context, in *peUpdateIn) (*peOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		pe, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &peOut{Body: *pe}, nil
+	})
+	huma.Register(api, huma.Operation{
 		OperationID: "submit-payment-entry", Method: http.MethodPost,
 		Path: "/accounting/payment-entries/{id}/submit", Summary: "Submit a Payment Entry (posts to GL, settles invoices)",
 		Tags: []string{"Accounting / Payment Entry"},
@@ -102,5 +116,9 @@ type (
 	}
 	peGetIn struct {
 		ID string `path:"id"`
+	}
+	peUpdateIn struct {
+		ID   string `path:"id"`
+		Body PaymentEntryUpdateInput
 	}
 )

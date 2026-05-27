@@ -146,6 +146,79 @@ func upsertDefault(ctx context.Context, tx pgx.Tx, customerID string, d Customer
 	return err
 }
 
+// CustomerUpdateInput mirrors CustomerCreateInput. Name is immutable (used as
+// a stable lookup key); display_name, contact info, and per-company defaults
+// can be edited freely.
+type CustomerUpdateInput struct {
+	DisplayName     string                  `json:"display_name"`
+	CustomerGroupID string                  `json:"customer_group_id,omitempty"`
+	DefaultCurrency string                  `json:"default_currency,omitempty"`
+	NPWP            string                  `json:"npwp,omitempty"`
+	IsIndividual    bool                    `json:"is_individual,omitempty"`
+	Email           string                  `json:"email,omitempty"`
+	Phone           string                  `json:"phone,omitempty"`
+	CustomFields    map[string]any          `json:"custom_fields,omitempty"`
+	Defaults        []CustomerDefaultInput  `json:"defaults,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in CustomerUpdateInput) (*Customer, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("customer: unauthenticated")
+	}
+	in.DisplayName = strings.TrimSpace(in.DisplayName)
+	in.NPWP = strings.TrimSpace(in.NPWP)
+	if in.NPWP != "" && !npwpRegex.MatchString(in.NPWP) {
+		return nil, errors.New("customer.npwp: must be 16 digits")
+	}
+	var before Customer
+	if err := s.db.QueryRow(ctx, `SELECT id, name FROM customer WHERE id = $1 AND is_deleted = false`, id).
+		Scan(&before.ID, &before.Name); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("customer %s not found", id)
+		}
+		return nil, err
+	}
+	if in.DisplayName == "" {
+		in.DisplayName = before.Name
+	}
+	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			UPDATE customer SET
+			  display_name = $2,
+			  customer_group_id = $3,
+			  default_currency = $4,
+			  npwp = $5,
+			  is_individual = $6,
+			  email = $7,
+			  phone = $8,
+			  custom_fields = $9,
+			  updated_by = $10,
+			  updated_at = now()
+			WHERE id = $1 AND is_deleted = false`,
+			id, in.DisplayName, nullable(in.CustomerGroupID), nullable(in.DefaultCurrency),
+			nullable(in.NPWP), in.IsIndividual, nullable(in.Email), nullable(in.Phone),
+			cf, p.UserID)
+		if err != nil {
+			return err
+		}
+		for _, d := range in.Defaults {
+			if err := upsertDefault(ctx, tx, id, d); err != nil {
+				return err
+			}
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 func (s *Service) Get(ctx context.Context, id string) (*Customer, error) {
 	var c Customer
 	err := s.db.QueryRow(ctx, `
@@ -274,6 +347,22 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &customerCreateOut{Body: *c}, nil
 	})
+	huma.Register(api, huma.Operation{
+		OperationID: "update-customer",
+		Method:      http.MethodPut,
+		Path:        "/accounting/customers/{id}",
+		Summary:     "Update a customer",
+		Tags:        []string{"Accounting / Customer"},
+	}, func(ctx context.Context, in *customerUpdateIn) (*customerCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		c, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &customerCreateOut{Body: *c}, nil
+	})
 }
 
 type (
@@ -285,6 +374,10 @@ type (
 	}
 	customerGetIn struct {
 		ID string `path:"id"`
+	}
+	customerUpdateIn struct {
+		ID   string `path:"id"`
+		Body CustomerUpdateInput
 	}
 )
 

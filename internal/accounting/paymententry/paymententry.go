@@ -390,6 +390,262 @@ func (s *Service) CreateDraft(ctx context.Context, in PaymentEntryCreateInput) (
 	return &out, err
 }
 
+// ---- Update (draft-only) ----
+
+// PaymentEntryUpdateInput mirrors PaymentEntryCreateInput but only fields that
+// are safe to mutate on a Draft are editable. Submitted/Cancelled entries are
+// immutable. company_id, payment_type, posting_date are immutable to preserve
+// the naming-series and fiscal-year context already baked in.
+type PaymentEntryUpdateInput struct {
+	PartyType          string                  `json:"party_type,omitempty"`
+	PartyID            string                  `json:"party_id,omitempty"`
+	PaidFromAccountID  string                  `json:"paid_from_account_id"`
+	PaidToAccountID    string                  `json:"paid_to_account_id"`
+	PaidAmount         string                  `json:"paid_amount"`
+	SourceExchangeRate string                  `json:"source_exchange_rate,omitempty"`
+	TargetExchangeRate string                  `json:"target_exchange_rate,omitempty"`
+	ReferenceNo        string                  `json:"reference_no,omitempty"`
+	ReferenceDate      string                  `json:"reference_date,omitempty"`
+	Remarks            string                  `json:"remarks,omitempty"`
+	References         []PaymentReferenceInput `json:"references,omitempty"`
+	Deductions         []PaymentDeductionInput `json:"deductions,omitempty"`
+	CustomFields       map[string]any          `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in PaymentEntryUpdateInput) (*PaymentEntry, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("payment_entry: unauthenticated")
+	}
+	paidAmount, err := decimal.NewFromString(strings.TrimSpace(in.PaidAmount))
+	if err != nil || !paidAmount.IsPositive() {
+		return nil, errors.New("payment_entry.paid_amount: must be > 0")
+	}
+	srcRate := decimal.NewFromInt(1)
+	if in.SourceExchangeRate != "" {
+		r, err := decimal.NewFromString(in.SourceExchangeRate)
+		if err != nil || !r.IsPositive() {
+			return nil, errors.New("payment_entry.source_exchange_rate: must be > 0")
+		}
+		srcRate = r
+	}
+	tgtRate := decimal.NewFromInt(1)
+	if in.TargetExchangeRate != "" {
+		r, err := decimal.NewFromString(in.TargetExchangeRate)
+		if err != nil || !r.IsPositive() {
+			return nil, errors.New("payment_entry.target_exchange_rate: must be > 0")
+		}
+		tgtRate = r
+	}
+
+	err = s.db.Tx(ctx, func(tx pgx.Tx) error {
+		existing, err := load(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if existing.Docstatus != submittable.Draft {
+			return fmt.Errorf("payment_entry: cannot edit (docstatus=%d)", existing.Docstatus)
+		}
+		partyType := in.PartyType
+		partyID := in.PartyID
+		if existing.PaymentType != PaymentInternalTransfer {
+			if partyType == "" {
+				partyType = existing.PartyType
+			}
+			if partyID == "" {
+				partyID = existing.PartyID
+			}
+			if partyType == "" || partyID == "" {
+				return errors.New("payment_entry: party_type/party_id required for receive/pay")
+			}
+		}
+
+		var fromCur, toCur string
+		if err := tx.QueryRow(ctx, `SELECT account_currency FROM account WHERE id = $1`, in.PaidFromAccountID).Scan(&fromCur); err != nil {
+			return fmt.Errorf("paid_from_account: %w", err)
+		}
+		if err := tx.QueryRow(ctx, `SELECT account_currency FROM account WHERE id = $1`, in.PaidToAccountID).Scan(&toCur); err != nil {
+			return fmt.Errorf("paid_to_account: %w", err)
+		}
+
+		// Re-validate + rebuild references.
+		refs := make([]PaymentEntryReference, len(in.References))
+		totalAllocated := decimal.Zero
+		for i, r := range in.References {
+			alloc, err := decimal.NewFromString(strings.TrimSpace(r.AllocatedAmount))
+			if err != nil || !alloc.IsPositive() {
+				return fmt.Errorf("references[%d].allocated_amount: must be > 0", i)
+			}
+			var (
+				docName     string
+				partyOnDoc  string
+				outstanding decimal.Decimal
+				docstatus   int16
+			)
+			switch r.ReferenceDoctype {
+			case "sales_invoice":
+				if existing.PaymentType != PaymentReceive {
+					return fmt.Errorf("references[%d]: sales_invoice references require payment_type=receive", i)
+				}
+				if err := tx.QueryRow(ctx, `
+					SELECT name, customer_id, outstanding_amount, docstatus
+					FROM sales_invoice WHERE id = $1`, r.ReferenceID).
+					Scan(&docName, &partyOnDoc, &outstanding, &docstatus); err != nil {
+					return fmt.Errorf("references[%d]: SI %s not found: %w", i, r.ReferenceID, err)
+				}
+			case "purchase_invoice":
+				if existing.PaymentType != PaymentPay {
+					return fmt.Errorf("references[%d]: purchase_invoice references require payment_type=pay", i)
+				}
+				if err := tx.QueryRow(ctx, `
+					SELECT name, supplier_id, outstanding_amount, docstatus
+					FROM purchase_invoice WHERE id = $1`, r.ReferenceID).
+					Scan(&docName, &partyOnDoc, &outstanding, &docstatus); err != nil {
+					return fmt.Errorf("references[%d]: PI %s not found: %w", i, r.ReferenceID, err)
+				}
+			default:
+				return fmt.Errorf("references[%d]: unsupported reference_doctype %q", i, r.ReferenceDoctype)
+			}
+			if docstatus != 1 {
+				return fmt.Errorf("references[%d]: %s %s is not submitted", i, r.ReferenceDoctype, docName)
+			}
+			if partyOnDoc != partyID {
+				return fmt.Errorf("references[%d]: %s %s belongs to a different party", i, r.ReferenceDoctype, docName)
+			}
+			if alloc.GreaterThan(outstanding) {
+				return fmt.Errorf("references[%d]: %s %s outstanding %s < allocated %s", i, r.ReferenceDoctype, docName, outstanding, alloc)
+			}
+			refs[i] = PaymentEntryReference{
+				ID: dbx.NewIDWithPrefix("per"), RowIndex: i + 1,
+				ReferenceDoctype: r.ReferenceDoctype, ReferenceID: r.ReferenceID, ReferenceName: docName,
+				TotalAmount: outstanding, AllocatedAmount: alloc,
+				BaseAllocatedAmount: alloc.Mul(srcRate).Round(money.Precision),
+			}
+			totalAllocated = totalAllocated.Add(alloc)
+		}
+
+		deds := make([]PaymentEntryDeduction, len(in.Deductions))
+		totalDeductions := decimal.Zero
+		for i, d := range in.Deductions {
+			amt, err := decimal.NewFromString(strings.TrimSpace(d.Amount))
+			if err != nil || !amt.IsPositive() {
+				return fmt.Errorf("deductions[%d].amount: must be > 0", i)
+			}
+			acct := d.AccountID
+			rateForDesc := decimal.Zero
+			if d.WithholdingTaxTypeID != "" {
+				var whtAcct string
+				if err := tx.QueryRow(ctx,
+					`SELECT account_id, rate FROM withholding_tax_type WHERE id = $1 AND is_deleted = false`,
+					d.WithholdingTaxTypeID).Scan(&whtAcct, &rateForDesc); err != nil {
+					return fmt.Errorf("deductions[%d]: withholding type: %w", i, err)
+				}
+				if acct == "" {
+					acct = whtAcct
+				}
+			}
+			if acct == "" {
+				return fmt.Errorf("deductions[%d].account_id: required (or specify withholding_tax_type_id)", i)
+			}
+			desc := d.Description
+			if desc == "" && d.WithholdingTaxTypeID != "" {
+				desc = fmt.Sprintf("Withholding %s%%", rateForDesc.String())
+			}
+			if desc == "" {
+				desc = "Deduction"
+			}
+			deds[i] = PaymentEntryDeduction{
+				ID: dbx.NewIDWithPrefix("ped"), RowIndex: i + 1,
+				AccountID: acct, Description: desc, Amount: amt,
+				CostCenterID: d.CostCenterID, WithholdingTaxTypeID: d.WithholdingTaxTypeID,
+			}
+			totalDeductions = totalDeductions.Add(amt)
+		}
+
+		expected := totalAllocated.Add(totalDeductions)
+		if !expected.Equal(paidAmount) {
+			return fmt.Errorf("payment_entry: allocated %s + deductions %s != paid %s",
+				totalAllocated, totalDeductions, paidAmount)
+		}
+		receivedAmount := paidAmount.Sub(totalDeductions)
+
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+
+		basePaid := paidAmount.Mul(srcRate).Round(money.Precision)
+		baseReceived := receivedAmount.Mul(tgtRate).Round(money.Precision)
+
+		if _, err := tx.Exec(ctx, `
+			UPDATE payment_entry SET
+			  party_type                  = $2,
+			  party_id                    = $3,
+			  paid_from_account_id        = $4,
+			  paid_to_account_id          = $5,
+			  paid_from_currency          = $6,
+			  paid_to_currency            = $7,
+			  paid_amount                 = $8,
+			  received_amount             = $9,
+			  source_exchange_rate        = $10,
+			  target_exchange_rate        = $11,
+			  base_paid_amount            = $12,
+			  base_received_amount        = $13,
+			  total_allocated_amount      = $14,
+			  base_total_allocated_amount = $15,
+			  total_deductions            = $16,
+			  reference_no                = $17,
+			  reference_date              = $18,
+			  remarks                     = $19,
+			  custom_fields               = $20,
+			  updated_by                  = $21
+			WHERE id = $1 AND docstatus = 0`,
+			id, nullable(partyType), nullable(partyID),
+			in.PaidFromAccountID, in.PaidToAccountID, fromCur, toCur,
+			paidAmount, receivedAmount, srcRate, tgtRate,
+			basePaid, baseReceived,
+			totalAllocated, totalAllocated.Mul(srcRate).Round(money.Precision), totalDeductions,
+			nullable(in.ReferenceNo), nullableDate(in.ReferenceDate), nullable(in.Remarks),
+			cf, p.UserID); err != nil {
+			return err
+		}
+
+		// Replace child tables.
+		if _, err := tx.Exec(ctx, `DELETE FROM payment_entry_reference WHERE payment_entry_id = $1`, id); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM payment_entry_deduction WHERE payment_entry_id = $1`, id); err != nil {
+			return err
+		}
+		for _, r := range refs {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO payment_entry_reference (id, payment_entry_id, row_index, reference_doctype,
+				                                    reference_id, reference_name, total_amount,
+				                                    allocated_amount, base_allocated_amount)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+				r.ID, id, r.RowIndex, r.ReferenceDoctype, r.ReferenceID, r.ReferenceName,
+				r.TotalAmount, r.AllocatedAmount, r.BaseAllocatedAmount); err != nil {
+				return err
+			}
+		}
+		for _, d := range deds {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO payment_entry_deduction (id, payment_entry_id, row_index, account_id, description,
+				                                    amount, cost_center_id, withholding_tax_type_id)
+				VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+				d.ID, id, d.RowIndex, d.AccountID, d.Description, d.Amount,
+				nullable(d.CostCenterID), nullable(d.WithholdingTaxTypeID)); err != nil {
+				return err
+			}
+		}
+		return audit.Record(ctx, tx, Doctype, id, p.UserID, audit.ActionUpdate, audit.Diff{After: in})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.Get(ctx, id)
+}
+
 // ---- Submit ----
 
 func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) {

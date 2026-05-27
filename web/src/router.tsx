@@ -108,6 +108,18 @@ const doctypeDetailRoutes = Object.values(doctypes)
     });
   });
 
+// Auto-built /{id}/edit routes — reuses CreateFormPage in edit mode.
+const doctypeEditRoutes = Object.values(doctypes)
+  .filter((dt) => !BESPOKE_NEW.has(`${dt.modulePath}/${dt.slug}`) && !!getCreateSchema(dt.modulePath, dt.slug))
+  .map((dt) => {
+    const schema = getCreateSchema(dt.modulePath, dt.slug)!;
+    return createRoute({
+      getParentRoute: () => appRoute,
+      path: `${dt.modulePath}/${dt.slug}/$id/edit`,
+      component: () => <CreateFormPage config={dt} schema={schema} editMode />,
+    });
+  });
+
 const moduleLandingRoutes = modules.map((m) =>
   createRoute({
     getParentRoute: () => appRoute,
@@ -140,6 +152,7 @@ const routeTree = rootRoute.addChildren([
     ...doctypeListRoutes,
     ...doctypeNewRoutes,
     ...doctypeDetailRoutes,
+    ...doctypeEditRoutes,
     ...moduleLandingRoutes,
     settingsIndexRoute, settingsSectionRoute, helpRoute,
   ]),

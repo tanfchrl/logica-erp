@@ -61,9 +61,10 @@ export function DetailView({ config, schema }: DetailViewProps) {
                 <ArrowLeft className="size-4" /> Back to {config.title}
               </Link>
             </Button>
-            {/* Edit button stays a hint — generic update endpoints aren't wired for every doctype yet */}
-            <Button variant="secondary" disabled title="Edit endpoints are per-doctype work">
-              <Pencil className="size-4" /> Edit
+            <Button variant="secondary" asChild>
+              <Link to={`${listPath}/${id}/edit` as never}>
+                <Pencil className="size-4" /> Edit
+              </Link>
             </Button>
           </>
         }
