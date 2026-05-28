@@ -66,6 +66,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/platform/apitokens"
 	"github.com/tandigital/logica-erp/internal/platform/audit"
 	"github.com/tandigital/logica-erp/internal/platform/connectors"
+	"github.com/tandigital/logica-erp/internal/platform/customfield"
 	"github.com/tandigital/logica-erp/internal/platform/dataimport"
 	"github.com/tandigital/logica-erp/internal/platform/notifrules"
 	"github.com/tandigital/logica-erp/internal/platform/payrollconfig"
@@ -130,6 +131,7 @@ func main() {
 	communicationSvc := communication.NewService(db)
 	crmMastersSvc := crmmasters.NewService(db)
 	savedViewSvc := savedview.NewService(db)
+	customFieldAdminSvc := customfield.NewAdminService(db)
 	projSvc := project.NewService(db)
 	taskSvc := task.NewService(db)
 	bomSvc := bom.NewService(db)
@@ -291,6 +293,7 @@ func main() {
 		communication.Register(hapi, &communication.Handler{Service: communicationSvc, Perm: perm})
 		crmmasters.Register(hapi, &crmmasters.Handler{Service: crmMastersSvc, Perm: perm})
 		savedview.Register(hapi, &savedview.Handler{Service: savedViewSvc})
+		customfield.RegisterAdmin(hapi, &customfield.AdminHandler{Service: customFieldAdminSvc})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
 		task.Register(hapi, &task.Handler{Service: taskSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})

@@ -16,6 +16,7 @@ import { AgentUsageSection }     from './AgentUsageSection';
 import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
 import { BuyingSettingsSection }  from './BuyingSettingsSection';
 import { AssetSettingsSection }   from './AssetSettingsSection';
+import { CustomFieldsSection }    from './CustomFieldsSection';
 import { FiscalYearsSection }    from './FiscalYearsSection';
 import { UsersSection }          from './UsersSection';
 import { RolesSection }          from './RolesSection';
@@ -175,6 +176,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'ai-policy-limits', group: 'system', label: 'AI policy limits', icon: ShieldCheck,
     description: 'Per-doctype IDR caps the agent must stay under on Tier-1 drafts.',
     component: AIPolicyLimitsSection, requireSystem: true },
+  { key: 'custom-fields', group: 'system', label: 'Custom fields', icon: Hash,
+    description: 'Add per-doctype extra fields without redeploying — visible to forms + API immediately.',
+    component: CustomFieldsSection, requireSystem: true },
 ];
 
 /** Sidebar grouping order + labels. */
