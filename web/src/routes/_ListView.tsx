@@ -8,6 +8,7 @@ import { DataTable } from '@/components/DataTable';
 import { EmptyState } from '@/components/EmptyState';
 import { Kbd } from '@/components/Kbd';
 import { SavedViewsBar, type SavedView } from '@/components/SavedViews';
+import { CustomizeFieldsButton } from '@/components/CustomizeFieldsButton';
 import { api } from '@/lib/api';
 import type { DoctypeConfig } from '@/lib/doctypes';
 
@@ -82,6 +83,7 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
             </Button>
             <Button variant="secondary"><Filter className="size-4" /> Filter</Button>
             <Button variant="secondary"><Download className="size-4" /> Export</Button>
+            <CustomizeFieldsButton doctype={config.doctype} />
             {extraActions}
             {config.hasNew !== false && (
               <Button asChild>

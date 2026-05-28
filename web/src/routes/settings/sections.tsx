@@ -112,6 +112,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'print-templates', group: 'documents', label: 'Print templates', icon: FileText,
     description: 'PDF templates per doctype, letterheads, paper size, and margins.',
     component: PrintTemplatesSection, requireSystem: true },
+  { key: 'custom-fields', group: 'documents', label: 'Custom fields', icon: Hash,
+    description: 'Add per-doctype extra fields without redeploying — visible to forms + API immediately. Also reachable from each list page.',
+    component: CustomFieldsSection, requireSystem: true },
 
   // ----- Communications -----
   { key: 'smtp', group: 'comms', label: 'Email (SMTP)', icon: Mail,
@@ -180,9 +183,6 @@ export const SECTIONS: SectionDef[] = [
   { key: 'ai-policy-limits', group: 'system', label: 'AI policy limits', icon: ShieldCheck,
     description: 'Per-doctype IDR caps the agent must stay under on Tier-1 drafts.',
     component: AIPolicyLimitsSection, requireSystem: true },
-  { key: 'custom-fields', group: 'system', label: 'Custom fields', icon: Hash,
-    description: 'Add per-doctype extra fields without redeploying — visible to forms + API immediately.',
-    component: CustomFieldsSection, requireSystem: true },
 ];
 
 /** Sidebar grouping order + labels. */
