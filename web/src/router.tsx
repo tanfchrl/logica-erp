@@ -17,6 +17,7 @@ import { PurchaseInvoiceForm } from './routes/PurchaseInvoiceForm';
 import { PurchaseOrderForm } from './routes/PurchaseOrderForm';
 import { MaterialRequestForm } from './routes/MaterialRequestForm';
 import { OpportunityBoard } from './routes/OpportunityBoard';
+import { Companies } from './routes/Companies';
 import { Button } from './components/Button';
 import { Columns3 } from 'lucide-react';
 import { PurchaseReceiptForm } from './routes/PurchaseReceiptForm';
@@ -75,6 +76,7 @@ const piEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accoun
 const poNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/new',   component: PurchaseOrderForm });
 const poEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/$id',   component: PurchaseOrderForm });
 const oppBoardRoute = createRoute({ getParentRoute: () => appRoute, path: '/crm/opportunities/board', component: OpportunityBoard });
+const companiesRoute = createRoute({ getParentRoute: () => appRoute, path: '/crm/companies',           component: Companies });
 const mrNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/new', component: MaterialRequestForm });
 const mrEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/$id', component: MaterialRequestForm });
 const grnNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/stock/purchase-receipts/new', component: PurchaseReceiptForm });
@@ -96,6 +98,7 @@ const SKIP_LIST = new Set([
   '/stock/purchase-receipts',       // GRN same pattern
   '/accounting/journal-entries',    // same as SI
   '/crm/opportunities',             // bespoke list — adds Board view toggle
+  '/crm/companies',                 // synthetic — unified customer + supplier view
 ]);
 
 const doctypeListRoutes = Object.values(doctypes)
@@ -197,7 +200,7 @@ const routeTree = rootRoute.addChildren([
     piNewRoute, piEditRoute, piListRoute,
     poNewRoute, poEditRoute, poListRoute,
     mrNewRoute, mrEditRoute, mrListRoute,
-    oppBoardRoute, oppListRoute,
+    oppBoardRoute, oppListRoute, companiesRoute,
     grnNewRoute, grnEditRoute, grnListRoute,
     jeNewRoute, jeEditRoute, jeListRoute,
     reportsIndex, reportsKind,

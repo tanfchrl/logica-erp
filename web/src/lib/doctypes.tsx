@@ -350,6 +350,20 @@ const employees: DoctypeConfig = {
   ],
 };
 
+// Companies is a synthetic doctype — has its own bespoke route
+// (`web/src/routes/Companies.tsx`) that joins customer + supplier. The
+// config lives here so it shows up on the CRM landing alongside the
+// real doctypes. The endpoint + columns are stubbed because the
+// generic ListView never sees them — the route is hand-built and the
+// auto-builder skips this slug via SKIP_LIST.
+const companies: DoctypeConfig = {
+  slug: 'companies', modulePath: '/crm', module: 'CRM',
+  doctype: 'customer',         // gate visibility on customer read perm
+  title: 'Companies', singular: 'Company', icon: Building2,
+  endpoint: '/accounting/customers', columns: [],
+  hasNew: false,
+};
+
 function OppStagePill({ value }: { value: string }) {
   switch (value) {
     case 'prospecting':   return <StatusPill tone="neutral" withDot={false}>Prospecting</StatusPill>;
@@ -539,7 +553,7 @@ export const doctypes: Record<string, DoctypeConfig> = {
   items, customers, suppliers, taxTemplates, accounts,
   salesInvoices, materialRequests, purchaseOrders, purchaseReceipts, purchaseInvoices, paymentEntries, journalEntries,
   warehouses, posInvoices,
-  employees, leads, contacts, opportunities, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
+  employees, leads, contacts, opportunities, companies, projects, boms, workOrders, assets, assetCategories, assetLocations, assetMovements, issues,
 };
 
 // Pretty-prints the four depreciation method enum values for tables + forms.
@@ -582,8 +596,8 @@ export const modules: { path: string; name: string; icon: LucideIcon; doctypes: 
   },
   {
     path: '/crm', name: 'CRM', icon: UserSquare,
-    description: 'Pipeline, leads, contacts, customers — your sales relationships.',
-    doctypes: [opportunities, leads, contacts, customers],
+    description: 'Pipeline, leads, contacts, companies — your sales relationships.',
+    doctypes: [opportunities, leads, contacts, companies],
   },
   {
     path: '/projects', name: 'Operations', icon: Briefcase,
