@@ -53,11 +53,25 @@ interface UIState {
 
   // Copilot panel state. openCopilotWith() is invoked from places like the
   // nudge bar — it opens the panel AND seeds the input/auto-sends a prompt.
-  // The panel component subscribes to (copilotOpen, copilotSeedPrompt) and
-  // handles the actual UI.
+  // The panel component subscribes to (copilotOpen, copilotMinimized,
+  // copilotSeedPrompt) and handles the actual UI.
+  //
+  // Floating chat lifecycle: the panel is always mounted in the shell so the
+  // conversation survives close/reopen cycles. Three visual states:
+  //   - hidden      (!open && !minimized): nothing on screen, sparkle in
+  //                 TopChrome reopens.
+  //   - minimized   (!open && minimized):  a small chip in the bottom-right
+  //                 corner; click to restore.
+  //   - open        (open):                the floating card.
   copilotOpen: boolean;
+  copilotMinimized: boolean;
   copilotSeedPrompt: string | null;
   openCopilotWith: (prompt: string) => void;
+  /** Restore from minimized OR open from hidden. */
+  openCopilot: () => void;
+  /** Collapse to chip; preserves conversation state. */
+  minimizeCopilot: () => void;
+  /** Hide entirely; preserves conversation state. */
   closeCopilot: () => void;
   /** Called by the panel after it consumes the seed so we don't re-send. */
   clearCopilotSeed: () => void;
@@ -132,9 +146,12 @@ export const useUI = create<UIState>()((set, get) => ({
   togglePalette: () => set({ paletteOpen: !get().paletteOpen }),
 
   copilotOpen: false,
+  copilotMinimized: false,
   copilotSeedPrompt: null,
-  openCopilotWith: (prompt) => set({ copilotOpen: true, copilotSeedPrompt: prompt }),
-  closeCopilot: () => set({ copilotOpen: false }),
+  openCopilotWith: (prompt) => set({ copilotOpen: true, copilotMinimized: false, copilotSeedPrompt: prompt }),
+  openCopilot: () => set({ copilotOpen: true, copilotMinimized: false }),
+  minimizeCopilot: () => set({ copilotOpen: false, copilotMinimized: true }),
+  closeCopilot: () => set({ copilotOpen: false, copilotMinimized: false }),
   clearCopilotSeed: () => set({ copilotSeedPrompt: null }),
 
   sidebarCollapsed: false,

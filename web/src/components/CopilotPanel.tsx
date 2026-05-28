@@ -2,19 +2,24 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
-import { Sparkles, X, SendHorizonal, RotateCw, Wrench, Check, FileText } from 'lucide-react';
+import { Sparkles, X, SendHorizonal, RotateCw, Wrench, Check, FileText, Minus } from 'lucide-react';
 import { api, getAccessToken, getActiveCompany } from '@/lib/api';
 import { cn } from '@/lib/cn';
 import { useUI } from '@/store/ui';
 
 /**
- * Floating Copilot panel — slides in from the right edge over the page.
+ * Floating Copilot panel — Intercom-style bottom-right card.
  *
- * Lives outside the per-page right rail so detail pages (which already use
- * 320px for Timeline / Approval / Meta) don't fight it for space.
+ * Non-modal: the page behind it stays interactive, so the user can keep
+ * navigating while a long-running chat turn streams. State (turns,
+ * sessionId, draft) lives in the component, which stays mounted in the
+ * shell — close/reopen and route changes don't lose history. Explicit
+ * reset only via the "New conversation" icon.
  *
- * Triggered by the violet sparkle button in TopChrome. Closes on outside-
- * click, Esc, or the X button.
+ * Three visual states driven by useUI store flags:
+ *   - hidden    (!open && !minimized): nothing rendered
+ *   - minimized (!open && minimized):  small chip in bottom-right
+ *   - open      (open):                floating card
  *
  * The panel talks to the standalone Agent service at /api/agent/v1 (port
  * 8090 in dev, behind a proxy in prod) — see cmd/agent. It forwards the
@@ -37,10 +42,10 @@ type ChatTurn =
   | { kind: 'tool';      name: string;    ok?: boolean; at: number }
   | { kind: 'proposal';  doctype: string; document_name: string; document_id: string; at: number };
 
-interface CopilotPanelProps {
-  open: boolean;
-  onClose: () => void;
-}
+// CopilotPanel has no props — it's a singleton mounted in TopChrome and
+// drives its visibility from the useUI store. Keeping it propless ensures
+// the chat state hidden in component-local hooks persists across the open/
+// minimize/close lifecycle.
 
 // streamChat opens POST /chat/stream as a Server-Sent Events stream. Each
 // SSE event is wrapped to the handler as a tagged object so React state
@@ -142,13 +147,18 @@ function parseSSE(raw: string): AgentSSE | null {
   }
 }
 
-export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
+export function CopilotPanel() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [draft, setDraft] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const qc = useQueryClient();
+  const open            = useUI((s) => s.copilotOpen);
+  const minimized       = useUI((s) => s.copilotMinimized);
+  const openCopilot     = useUI((s) => s.openCopilot);
+  const minimizeCopilot = useUI((s) => s.minimizeCopilot);
+  const closeCopilot    = useUI((s) => s.closeCopilot);
   // Seed prompt set by openCopilotWith() (e.g. from a nudge CTA). When the
   // panel opens and a seed is pending, we fire it as a chat turn and clear
   // the store so future opens don't re-send.
@@ -277,14 +287,16 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
     }
   }
 
-  // Close on Esc, focus the input on open, auto-scroll on new turns.
+  // Esc minimizes (not closes) so accidental keypresses don't bury the
+  // chat — the chip stays visible as a reminder it's still alive. Focus
+  // the input when the panel becomes visible.
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') minimizeCopilot(); };
     window.addEventListener('keydown', onKey);
     setTimeout(() => inputRef.current?.focus(), 50);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+  }, [open, minimizeCopilot]);
 
   // When the panel opens with a seed prompt waiting (set by openCopilotWith
   // from somewhere else — typically a nudge CTA), auto-send it.
@@ -321,21 +333,46 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
     setTimeout(() => inputRef.current?.focus(), 50);
   }
 
-  if (!open) return null;
-  return createPortal(
-    <>
-      {/* Scrim */}
+  // Hidden: render nothing but keep the component mounted so chat state
+  // (turns, sessionId, draft) survives close → reopen cycles.
+  if (!open && !minimized) return null;
+
+  // Minimized: small chip in bottom-right. Click to restore. Preserves
+  // state. Surfaces the turn count so the user knows something is
+  // waiting for them.
+  if (!open && minimized) {
+    const lastUserMsg = [...turns].reverse().find((t) => t.kind === 'user');
+    const preview = lastUserMsg?.kind === 'user' ? lastUserMsg.content : '';
+    return createPortal(
       <button
         type="button"
-        aria-label="Close Copilot"
-        onClick={onClose}
-        className="fixed inset-0 z-40 bg-ink/20 backdrop-blur-[2px] animate-in fade-in"
-      />
-      {/* Panel */}
+        onClick={openCopilot}
+        aria-label="Restore Logica AI Copilot"
+        className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full bg-accent text-canvas pl-3 pr-4 py-2 shadow-lg hover:bg-accent/90 transition-colors max-w-[280px]"
+      >
+        <Sparkles className="size-4 shrink-0" />
+        <span className="text-body-sm font-medium shrink-0">Copilot</span>
+        {turns.length > 0 && (
+          <>
+            <span className="text-canvas/70 shrink-0">·</span>
+            <span className="text-caption text-canvas/85 truncate">
+              {preview || `${turns.length} turn${turns.length === 1 ? '' : 's'}`}
+            </span>
+          </>
+        )}
+      </button>,
+      document.body,
+    );
+  }
+
+  return createPortal(
+    <>
+      {/* No scrim — the panel is non-modal so the user can keep clicking
+          the page behind it. */}
       <aside
         role="dialog"
         aria-label="Logica AI Copilot"
-        className="fixed top-0 right-0 z-50 h-full w-[420px] max-w-[90vw] bg-canvas border-l border-hairline shadow-xl flex flex-col"
+        className="fixed bottom-4 right-4 z-40 w-[400px] max-w-[calc(100vw-2rem)] h-[620px] max-h-[calc(100vh-2rem)] bg-canvas border border-hairline rounded-xl shadow-2xl flex flex-col overflow-hidden"
       >
         <header className="px-4 py-3 border-b border-hairline flex items-center gap-2 relative">
           <span className="inline-flex items-center justify-center size-7 rounded-full bg-accent/15 text-accent">
@@ -358,7 +395,7 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
           <button
             type="button"
             onClick={() => { newConversation(); setShowSessions(false); }}
-            title="Start a new conversation"
+            title="Start a new conversation (resets the current one)"
             className="text-stone hover:text-ink p-1"
             aria-label="New conversation"
           >
@@ -366,9 +403,19 @@ export function CopilotPanel({ open, onClose }: CopilotPanelProps) {
           </button>
           <button
             type="button"
-            onClick={onClose}
+            onClick={minimizeCopilot}
+            title="Minimize to chip — conversation kept"
             className="text-stone hover:text-ink p-1"
-            aria-label="Close"
+            aria-label="Minimize"
+          >
+            <Minus className="size-4" />
+          </button>
+          <button
+            type="button"
+            onClick={closeCopilot}
+            title="Hide — conversation kept; reopen via the sparkle icon in the top bar"
+            className="text-stone hover:text-ink p-1"
+            aria-label="Hide"
           >
             <X className="size-4" />
           </button>

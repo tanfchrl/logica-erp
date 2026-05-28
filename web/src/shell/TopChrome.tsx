@@ -20,10 +20,13 @@ export function TopChrome() {
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const toggleTheme = useUI((s) => s.toggleTheme);
   // Copilot panel state lives in the store so other components (the nudge
-  // bar) can open it with a seed prompt.
-  const copilotOpen = useUI((s) => s.copilotOpen);
-  const closeCopilot = useUI((s) => s.closeCopilot);
-  const openCopilotWith = useUI((s) => s.openCopilotWith);
+  // bar) can open it with a seed prompt. The sparkle button toggles between
+  // the floating card and fully hidden; chip-minimization is its own state
+  // surfaced from the panel itself.
+  const copilotOpen      = useUI((s) => s.copilotOpen);
+  const copilotMinimized = useUI((s) => s.copilotMinimized);
+  const openCopilot      = useUI((s) => s.openCopilot);
+  const closeCopilot     = useUI((s) => s.closeCopilot);
 
   const [user, setUser] = useState<{ full_name: string; email: string } | null>(null);
   useEffect(() => {
@@ -57,11 +60,11 @@ export function TopChrome() {
       <div className="ml-auto flex items-center gap-2">
         <button
           type="button"
-          onClick={() => copilotOpen ? closeCopilot() : openCopilotWith('')}
+          onClick={() => copilotOpen ? closeCopilot() : openCopilot()}
           aria-label="Logica AI Copilot"
           className={
             'relative inline-flex items-center justify-center size-8 rounded-full transition-colors ' +
-            (copilotOpen
+            (copilotOpen || copilotMinimized
               ? 'bg-accent/15 text-accent'
               : 'text-steel hover:bg-surface hover:text-ink')
           }
@@ -101,7 +104,7 @@ export function TopChrome() {
         </DropdownMenu>
       </div>
 
-      <CopilotPanel open={copilotOpen} onClose={closeCopilot} />
+      <CopilotPanel />
     </div>
   );
 }
