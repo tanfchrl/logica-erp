@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { Search, Menu, Sparkles } from 'lucide-react';
 import { useUI } from '@/store/ui';
 import { Avatar } from '@/components/Avatar';
@@ -16,6 +17,7 @@ import { logout, me } from '@/lib/auth';
  * icon buttons, generous gap to the page header below.
  */
 export function TopChrome() {
+  const navigate = useNavigate();
   const togglePalette = useUI((s) => s.togglePalette);
   const toggleSidebar = useUI((s) => s.toggleSidebar);
   const toggleTheme = useUI((s) => s.toggleTheme);
@@ -92,7 +94,14 @@ export function TopChrome() {
               Switch theme
               <span className="ml-auto kbd">T</span>
             </DropdownMenuItem>
-            <DropdownMenuItem>Account settings</DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => void navigate({
+                to: '/settings/$section' as never,
+                params: { section: 'sessions' } as never,
+              })}
+            >
+              Account settings
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onClick={async () => { await logout(); window.location.href = '/login'; }}
