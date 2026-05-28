@@ -17,6 +17,11 @@ interface DataTableProps<TData, TValue> {
   toolbar?: React.ReactNode;
   emptyState?: React.ReactNode;
   onRowClick?: (row: TData) => void;
+  /** Optional controlled search-text. When set, the parent owns the value
+   *  (e.g. so saved views can drive it). Otherwise the table manages it
+   *  internally as before. */
+  globalFilter?: string;
+  onGlobalFilterChange?: (value: string) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -27,9 +32,13 @@ export function DataTable<TData, TValue>({
   toolbar,
   emptyState,
   onRowClick,
+  globalFilter: controlledFilter,
+  onGlobalFilterChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
-  const [globalFilter, setGlobalFilter] = useState('');
+  const [uncontrolledFilter, setUncontrolledFilter] = useState('');
+  const globalFilter = controlledFilter ?? uncontrolledFilter;
+  const setGlobalFilter = onGlobalFilterChange ?? setUncontrolledFilter;
 
   const table = useReactTable({
     data,

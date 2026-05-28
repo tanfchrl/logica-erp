@@ -69,6 +69,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/platform/dataimport"
 	"github.com/tandigital/logica-erp/internal/platform/notifrules"
 	"github.com/tandigital/logica-erp/internal/platform/payrollconfig"
+	"github.com/tandigital/logica-erp/internal/platform/savedview"
 	"github.com/tandigital/logica-erp/internal/platform/sysinsights"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
 	"github.com/tandigital/logica-erp/internal/platform/email"
@@ -128,6 +129,7 @@ func main() {
 	noteSvc := note.NewService(db)
 	communicationSvc := communication.NewService(db)
 	crmMastersSvc := crmmasters.NewService(db)
+	savedViewSvc := savedview.NewService(db)
 	projSvc := project.NewService(db)
 	taskSvc := task.NewService(db)
 	bomSvc := bom.NewService(db)
@@ -288,6 +290,7 @@ func main() {
 		note.Register(hapi, &note.Handler{Service: noteSvc, Perm: perm})
 		communication.Register(hapi, &communication.Handler{Service: communicationSvc, Perm: perm})
 		crmmasters.Register(hapi, &crmmasters.Handler{Service: crmMastersSvc, Perm: perm})
+		savedview.Register(hapi, &savedview.Handler{Service: savedViewSvc})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
 		task.Register(hapi, &task.Handler{Service: taskSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})

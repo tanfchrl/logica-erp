@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { Plus, Download, Filter, RefreshCw } from 'lucide-react';
@@ -6,8 +7,15 @@ import { Button } from '@/components/Button';
 import { DataTable } from '@/components/DataTable';
 import { EmptyState } from '@/components/EmptyState';
 import { Kbd } from '@/components/Kbd';
+import { SavedViewsBar, type SavedView } from '@/components/SavedViews';
 import { api } from '@/lib/api';
 import type { DoctypeConfig } from '@/lib/doctypes';
+
+// Shape we persist as saved_view.body for table-style lists. Kept small
+// for v1 — searchText is by far the highest-value piece.
+interface ListViewBody {
+  searchText?: string;
+}
 
 interface ListResponseShape {
   items: unknown[];
@@ -40,6 +48,15 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
   const rows = (data?.items as any[] | undefined) ?? [];
   const forbidden = (error as { status?: number })?.status === 403;
   const newHref = config.newPath ?? `${config.modulePath}/${config.slug}/new`;
+
+  // Saved-views state. The active view's body drives searchText; otherwise
+  // the user owns it.
+  const [searchText, setSearchText] = useState('');
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const onSelectView = (v: SavedView<ListViewBody> | null) => {
+    setActiveViewId(v?.id ?? null);
+    setSearchText(v?.body?.searchText ?? '');
+  };
 
   // Default row click: open the doctype detail page at /{module}/{slug}/{id}.
   // Callers can pass their own onRowClick to override (e.g. open a side panel).
@@ -76,13 +93,23 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
           </>
         }
       />
-      <div className="flex-1 px-6 lg:px-8 pt-6 pb-8">
+      <div className="flex-1 px-6 lg:px-8 pt-3 pb-8 space-y-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <SavedViewsBar<ListViewBody>
+            doctype={config.doctype}
+            currentBody={{ searchText: searchText || undefined }}
+            activeViewId={activeViewId}
+            onSelectView={onSelectView}
+          />
+        </div>
         <DataTable
           columns={config.columns}
           data={rows}
           loading={isLoading}
           searchPlaceholder={`Search ${config.title.toLowerCase()}…`}
           onRowClick={handleRowClick}
+          globalFilter={searchText}
+          onGlobalFilterChange={setSearchText}
           emptyState={
             isError ? (
               <EmptyState
