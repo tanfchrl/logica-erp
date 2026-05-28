@@ -379,6 +379,18 @@ func defaultMessage(eventKey string, p map[string]any) (subject, body string) {
 		subject = "Payroll " + name + " submitted"
 	case "timesheet.submitted":
 		subject = "Timesheet " + name + " submitted"
+	case "pos_invoice.submitted":
+		subject = "POS sale " + name + " submitted"
+	case "period_closing.submitted":
+		subject = "Period closing " + name + " submitted"
+	case "asset_movement.submitted":
+		subject = "Asset movement " + name + " submitted"
+	case "asset_value_adjustment.submitted":
+		kind := strOrEmpty(p["kind"])
+		subject = "Asset value adjustment " + name + " submitted"
+		if kind != "" {
+			subject += " (" + kind + ")"
+		}
 	case "approval.requested":
 		subject = "Approval needed: " + name
 	case "approval.decided":

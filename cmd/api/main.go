@@ -245,6 +245,10 @@ func main() {
 	assetSvc.Notifier = notifier
 	payrollSvc.Notifier = notifier
 	tsSvc.Notifier = notifier
+	pcvSvc.Notifier = notifier
+	assetMovementSvc.Notifier = notifier
+	assetVASvc.Notifier = notifier
+	posSvc.Notifier = notifier
 	soSvc.Approvals = approvalEng
 	soSvc.Workflow = workflowEng
 	tsSvc.Workflow = workflowEng

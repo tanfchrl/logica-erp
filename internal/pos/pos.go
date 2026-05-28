@@ -122,7 +122,16 @@ type POSInvoiceItemInput struct {
 	Rate     string `json:"rate"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db *dbx.DB
+	// Notifier is optional. CreateAndSubmit() fires pos_invoice.submitted after commit
+	// only on first creation — re-syncing the same offline_key does not refire.
+	Notifier notifier
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -183,6 +192,7 @@ func (s *Service) CreateAndSubmit(ctx context.Context, in POSInvoiceCreateInput)
 
 	id := dbx.NewIDWithPrefix("posi")
 	var out POSInvoice
+	var firstCreate bool
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
 		// Idempotency: if offline_key already exists for this profile, return existing.
 		if in.OfflineKey != "" {
@@ -202,6 +212,7 @@ func (s *Service) CreateAndSubmit(ctx context.Context, in POSInvoiceCreateInput)
 				return err
 			}
 		}
+		firstCreate = true
 
 		var prof POSProfile
 		err := tx.QueryRow(ctx, `
@@ -399,6 +410,18 @@ func (s *Service) CreateAndSubmit(ctx context.Context, in POSInvoiceCreateInput)
 		out = *loaded
 		return nil
 	})
+	if err == nil && firstCreate && s.Notifier != nil {
+		grand, _ := out.GrandTotal.Float64()
+		s.Notifier.Fire("pos_invoice.submitted", map[string]any{
+			"company_id":    out.CompanyID,
+			"doctype":       DoctypePOSInvoice,
+			"document_id":   out.ID,
+			"document_name": out.Name,
+			"grand_total":   grand,
+			"summary":       fmt.Sprintf("POS invoice %s submitted, grand total %s", out.Name, out.GrandTotal.String()),
+			"POSInvoice":    out,
+		})
+	}
 	return &out, err
 }
 

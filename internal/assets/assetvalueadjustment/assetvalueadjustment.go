@@ -74,7 +74,15 @@ type AssetValueAdjustmentInput struct {
 	ImpairmentLossAccountID     string `json:"impairment_loss_account_id,omitempty"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db *dbx.DB
+	// Notifier is optional. Submit() fires asset_value_adjustment.submitted after commit.
+	Notifier notifier
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -342,6 +350,20 @@ func (s *Service) Submit(ctx context.Context, id string) (*ValueAdjustment, erro
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		amt, _ := out.Amount.Float64()
+		s.Notifier.Fire("asset_value_adjustment.submitted", map[string]any{
+			"company_id":      out.CompanyID,
+			"doctype":         Doctype,
+			"document_id":     out.ID,
+			"document_name":   out.Name,
+			"asset_id":        out.AssetID,
+			"kind":            out.Kind,
+			"amount":          amt,
+			"summary":         fmt.Sprintf("Asset value adjustment %s submitted (%s %s)", out.Name, out.Kind, out.Amount.String()),
+			"ValueAdjustment": out,
+		})
+	}
 	return &out, err
 }
 

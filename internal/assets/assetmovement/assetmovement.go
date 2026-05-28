@@ -76,7 +76,15 @@ type MovementCreateInput struct {
 	CustomFields   map[string]any `json:"custom_fields,omitempty"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db *dbx.DB
+	// Notifier is optional. Submit() fires asset_movement.submitted after commit.
+	Notifier notifier
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -251,6 +259,19 @@ func (s *Service) Submit(ctx context.Context, id string) (*AssetMovement, error)
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		s.Notifier.Fire("asset_movement.submitted", map[string]any{
+			"company_id":     out.CompanyID,
+			"doctype":        Doctype,
+			"document_id":    out.ID,
+			"document_name":  out.Name,
+			"asset_id":       out.AssetID,
+			"movement_type":  out.MovementType,
+			"to_custodian":   out.ToCustodian,
+			"summary":        fmt.Sprintf("Asset movement %s submitted (%s → %s)", out.Name, out.MovementType, out.ToCustodian),
+			"AssetMovement":  out,
+		})
+	}
 	return &out, err
 }
 

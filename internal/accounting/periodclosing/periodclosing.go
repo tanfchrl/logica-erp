@@ -58,6 +58,8 @@ type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
 	Workflow  workflowGate
+	// Notifier is optional. Submit() fires period_closing.submitted after commit.
+	Notifier notifier
 }
 
 type approvalChecker interface {
@@ -66,6 +68,10 @@ type approvalChecker interface {
 
 type workflowGate interface {
 	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -265,6 +271,17 @@ func (s *Service) Submit(ctx context.Context, id string) (*PeriodClosingVoucher,
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		s.Notifier.Fire("period_closing.submitted", map[string]any{
+			"company_id":            out.CompanyID,
+			"doctype":               Doctype,
+			"document_id":           out.ID,
+			"document_name":         out.Name,
+			"fiscal_year_id":        out.FiscalYearID,
+			"summary":               fmt.Sprintf("Period closing %s submitted", out.Name),
+			"PeriodClosingVoucher": out,
+		})
+	}
 	return &out, err
 }
 
