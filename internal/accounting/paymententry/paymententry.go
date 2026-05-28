@@ -196,6 +196,16 @@ func (s *Service) CreateDraft(ctx context.Context, in PaymentEntryCreateInput) (
 		if in.PartyType == "" || in.PartyID == "" {
 			return nil, errors.New("payment_entry: party_type/party_id required for receive/pay")
 		}
+	} else {
+		if len(in.References) > 0 {
+			return nil, errors.New("payment_entry: internal_transfer cannot reference invoices")
+		}
+		if len(in.Deductions) > 0 {
+			return nil, errors.New("payment_entry: internal_transfer cannot carry deductions")
+		}
+		if in.PaidFromAccountID == in.PaidToAccountID {
+			return nil, errors.New("payment_entry: internal_transfer requires distinct paid_from/paid_to accounts")
+		}
 	}
 	pd, err := time.Parse("2006-01-02", in.PostingDate)
 	if err != nil {
@@ -330,7 +340,9 @@ func (s *Service) CreateDraft(ctx context.Context, in PaymentEntryCreateInput) (
 		if err != nil {
 			return err
 		}
-		receivedAmount := paidAmount
+		// FX-correct: same cash flow expressed in target currency.
+		// Same-ccy (srcRate=tgtRate=1) collapses to paidAmount.
+		receivedAmount := paidAmount.Mul(srcRate).Div(tgtRate).Round(money.Precision)
 
 		fyID, err := pickFiscalYear(ctx, tx, in.CompanyID, pd)
 		if err != nil {
@@ -472,6 +484,18 @@ func (s *Service) Update(ctx context.Context, id string, in PaymentEntryUpdateIn
 			if partyType == "" || partyID == "" {
 				return errors.New("payment_entry: party_type/party_id required for receive/pay")
 			}
+		} else {
+			if len(in.References) > 0 {
+				return errors.New("payment_entry: internal_transfer cannot reference invoices")
+			}
+			if len(in.Deductions) > 0 {
+				return errors.New("payment_entry: internal_transfer cannot carry deductions")
+			}
+			if in.PaidFromAccountID == in.PaidToAccountID {
+				return errors.New("payment_entry: internal_transfer requires distinct paid_from/paid_to accounts")
+			}
+			partyType = ""
+			partyID = ""
 		}
 
 		var fromCur, toCur string
@@ -580,7 +604,9 @@ func (s *Service) Update(ctx context.Context, id string, in PaymentEntryUpdateIn
 		if err != nil {
 			return err
 		}
-		receivedAmount := paidAmount
+		// FX-correct: same cash flow expressed in target currency.
+		// Same-ccy (srcRate=tgtRate=1) collapses to paidAmount.
+		receivedAmount := paidAmount.Mul(srcRate).Div(tgtRate).Round(money.Precision)
 
 		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
 		if err != nil {
@@ -676,9 +702,6 @@ func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) 
 		if pe.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
 		}
-		if pe.PaymentType == PaymentInternalTransfer {
-			return errors.New("payment_entry.submit: internal_transfer is not implemented yet")
-		}
 
 		// Workflow role gate.
 		if s.Workflow != nil {
@@ -751,6 +774,25 @@ func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) 
 				CreditInAccountCurrency: settleAcct,
 				Against:                 pe.PaidToAccountID,
 				Remarks:                 pe.Name + " — settle receivable",
+			})
+
+		case PaymentInternalTransfer:
+			// Dr paid_to (target cash), Cr paid_from (source cash). No party.
+			entries = append(entries, ledger.Entry{
+				AccountID:              pe.PaidToAccountID,
+				Debit:                  pe.BaseReceivedAmount,
+				AccountCurrency:        pe.PaidToCurrency,
+				DebitInAccountCurrency: pe.ReceivedAmount,
+				Against:                pe.PaidFromAccountID,
+				Remarks:                pe.Name + " — internal transfer in",
+			})
+			entries = append(entries, ledger.Entry{
+				AccountID:               pe.PaidFromAccountID,
+				Credit:                  pe.BasePaidAmount,
+				AccountCurrency:         pe.PaidFromCurrency,
+				CreditInAccountCurrency: pe.PaidAmount,
+				Against:                 pe.PaidToAccountID,
+				Remarks:                 pe.Name + " — internal transfer out",
 			})
 
 		case PaymentPay:
