@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   flexRender, getCoreRowModel, getFilteredRowModel, getSortedRowModel, useReactTable,
-  type ColumnDef, type SortingState,
+  type ColumnDef, type ColumnFiltersState, type SortingState,
 } from '@tanstack/react-table';
 import { ArrowDown, ArrowUp, ArrowUpDown, Search } from 'lucide-react';
 import { cn } from '@/lib/cn';
@@ -22,6 +22,10 @@ interface DataTableProps<TData, TValue> {
    *  internally as before. */
   globalFilter?: string;
   onGlobalFilterChange?: (value: string) => void;
+  /** Optional controlled column-level filters (substring contains). Used
+   *  by ListView's Filter popover. */
+  columnFilters?: ColumnFiltersState;
+  onColumnFiltersChange?: (next: ColumnFiltersState) => void;
 }
 
 export function DataTable<TData, TValue>({
@@ -34,18 +38,25 @@ export function DataTable<TData, TValue>({
   onRowClick,
   globalFilter: controlledFilter,
   onGlobalFilterChange,
+  columnFilters: controlledColumnFilters,
+  onColumnFiltersChange,
 }: DataTableProps<TData, TValue>) {
   const [sorting, setSorting] = useState<SortingState>([]);
   const [uncontrolledFilter, setUncontrolledFilter] = useState('');
+  const [uncontrolledColumnFilters, setUncontrolledColumnFilters] = useState<ColumnFiltersState>([]);
   const globalFilter = controlledFilter ?? uncontrolledFilter;
   const setGlobalFilter = onGlobalFilterChange ?? setUncontrolledFilter;
+  const columnFilters = controlledColumnFilters ?? uncontrolledColumnFilters;
+  const setColumnFilters = onColumnFiltersChange ?? setUncontrolledColumnFilters;
 
   const table = useReactTable({
     data,
     columns,
-    state: { sorting, globalFilter },
+    state: { sorting, globalFilter, columnFilters },
     onSortingChange: setSorting,
     onGlobalFilterChange: setGlobalFilter,
+    onColumnFiltersChange: (updater) =>
+      setColumnFilters(typeof updater === 'function' ? updater(columnFilters) : updater),
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getFilteredRowModel: getFilteredRowModel(),
