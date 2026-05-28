@@ -257,7 +257,9 @@ export const opportunityCreate: CreateSchema = {
         { value: 'negotiation',   label: 'Negotiation' },
         { value: 'closed_won',    label: 'Closed Won' },
       ] },
-    { name: 'source',  label: 'Source', kind: 'text', placeholder: 'e.g. referral, web, event' },
+    { name: 'source',  label: 'Source', kind: 'link',
+      linkEndpoint: '/crm/lead-sources', linkLabel: 'name',
+      hint: 'Add new sources in Settings → CRM masters.' },
     { name: 'remarks', label: 'Notes', kind: 'textarea', span: 2 },
   ],
 };

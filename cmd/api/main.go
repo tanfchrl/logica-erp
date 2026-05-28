@@ -45,6 +45,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/assets/asset"
 	"github.com/tandigital/logica-erp/internal/crm/communication"
 	"github.com/tandigital/logica-erp/internal/crm/contact"
+	"github.com/tandigital/logica-erp/internal/crm/crmmasters"
 	"github.com/tandigital/logica-erp/internal/crm/lead"
 	"github.com/tandigital/logica-erp/internal/crm/note"
 	"github.com/tandigital/logica-erp/internal/crm/opportunity"
@@ -126,6 +127,7 @@ func main() {
 	opportunitySvc := opportunity.NewService(db)
 	noteSvc := note.NewService(db)
 	communicationSvc := communication.NewService(db)
+	crmMastersSvc := crmmasters.NewService(db)
 	projSvc := project.NewService(db)
 	taskSvc := task.NewService(db)
 	bomSvc := bom.NewService(db)
@@ -285,6 +287,7 @@ func main() {
 		opportunity.Register(hapi, &opportunity.Handler{Service: opportunitySvc, Perm: perm})
 		note.Register(hapi, &note.Handler{Service: noteSvc, Perm: perm})
 		communication.Register(hapi, &communication.Handler{Service: communicationSvc, Perm: perm})
+		crmmasters.Register(hapi, &crmmasters.Handler{Service: crmMastersSvc, Perm: perm})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
 		task.Register(hapi, &task.Handler{Service: taskSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})
