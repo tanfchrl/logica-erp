@@ -12,6 +12,7 @@ import { EmptyState } from '@/components/EmptyState';
 import { Kbd } from '@/components/Kbd';
 import { SavedViewsBar, type SavedView } from '@/components/SavedViews';
 import { CustomizeFieldsButton } from '@/components/CustomizeFieldsButton';
+import { StarMenuButton } from '@/components/StarMenuButton';
 import { api } from '@/lib/api';
 import type { DoctypeConfig } from '@/lib/doctypes';
 
@@ -113,6 +114,10 @@ export function ListView({ config, extraActions, onRowClick }: ListViewProps) {
             >
               <Download className="size-4" /> Export
             </Button>
+            <StarMenuButton
+              path={`${config.modulePath}/${config.slug}`}
+              label={config.title}
+            />
             <CustomizeFieldsButton doctype={config.doctype} />
             {extraActions}
             {config.hasNew !== false && (

@@ -1,6 +1,6 @@
 import { Link, useRouterState } from '@tanstack/react-router';
 import {
-  Home, Receipt, ShoppingBag, Wallet, BarChart3, Package, Warehouse, Factory,
+  Home, ShoppingBag, Wallet, BarChart3, Warehouse, Factory,
   Briefcase, Users, UserSquare, ClipboardList, Headphones, Settings, HelpCircle,
   ChevronsLeft, Star, Plus, Building2, ChevronsUpDown,
 } from 'lucide-react';
@@ -8,6 +8,8 @@ import { useTranslation } from 'react-i18next';
 import { cn } from '@/lib/cn';
 import { useUI } from '@/store/ui';
 import { useMyPermissions } from '@/lib/permissions';
+import { useStarredMenu } from '@/lib/starredMenu';
+import { doctypes } from '@/lib/doctypes';
 import { Tooltip } from '@/components/Tooltip';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from '@/components/DropdownMenu';
 
@@ -37,13 +39,6 @@ const sections: { label?: string; items: GuardedNavItem[] }[] = [
     ],
   },
   {
-    label: 'Starred',
-    items: [
-      { to: '/accounting/sales-invoices', label: 'Sales Invoices', icon: Receipt, requireAny: ['sales_invoice'] },
-      { to: '/accounting/items',          label: 'Items',          icon: Package, requireAny: ['item'] },
-    ],
-  },
-  {
     label: 'Modules',
     items: [
       { to: '/accounting',     label: 'Finance',            icon: Wallet,         requireAny: ['sales_invoice','purchase_invoice','journal_entry','payment_entry','customer','supplier','item','tax_template','account'] },
@@ -66,6 +61,7 @@ export function Sidebar() {
   const path = router.location.pathname;
   const { t: _t } = useTranslation();
   const perms = useMyPermissions();
+  const { items: stars } = useStarredMenu();
 
   // Filter each section's items by the caller's read perms. Drop sections
   // that end up empty — a label with zero items is just noise.
@@ -75,6 +71,18 @@ export function Sidebar() {
       items: s.items.filter((it) => !it.requireAny || perms.canRead_any(it.requireAny)),
     }))
     .filter((s) => s.items.length > 0);
+
+  // Build the dynamic Starred section from the user's saved stars. Icon
+  // resolution: prefer the matching DoctypeConfig.icon (so the sidebar
+  // looks like the page header); fall back to a generic Star.
+  const starredSection: { label: string; items: NavItem[] } | null = stars.length === 0 ? null : {
+    label: 'Starred',
+    items: stars.map((s) => ({
+      to: s.path,
+      label: s.label,
+      icon: iconForPath(s.path),
+    })),
+  };
 
   return (
     <aside
@@ -90,6 +98,44 @@ export function Sidebar() {
 
       {/* Nav */}
       <nav className="flex-1 overflow-y-auto px-2 py-2 space-y-5">
+        {starredSection && (
+          <div>
+            {!sidebarCollapsed && (
+              <div className="px-2.5 pt-1 pb-1.5 flex items-center gap-1.5 text-stone text-micro-uppercase">
+                <Star className="size-3" />
+                {starredSection.label}
+              </div>
+            )}
+            <ul className="space-y-0.5">
+              {starredSection.items.map((item) => {
+                const active = path === item.to || (item.to !== '/' && path.startsWith(item.to));
+                const link = (
+                  <Link
+                    to={item.to as never}
+                    className={cn(
+                      'flex items-center gap-2.5 px-2.5 h-8 rounded-md text-body-sm transition-colors',
+                      active
+                        ? 'bg-surface text-ink font-medium'
+                        : 'text-steel hover:bg-surface hover:text-ink',
+                      sidebarCollapsed && 'justify-center px-0',
+                    )}
+                  >
+                    {active && !sidebarCollapsed && (
+                      <span className="absolute left-0 size-1.5 rounded-full bg-brand-green -ml-0.5" aria-hidden />
+                    )}
+                    <item.icon className={cn('size-4 shrink-0', active && 'text-ink')} />
+                    {!sidebarCollapsed && <span className="truncate">{item.label}</span>}
+                  </Link>
+                );
+                return (
+                  <li key={item.to} className="group relative">
+                    {sidebarCollapsed ? <Tooltip side="right" content={item.label}>{link}</Tooltip> : link}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
         {visibleSections.map((section, sIdx) => (
           <div key={sIdx}>
             {section.label && !sidebarCollapsed && (
@@ -171,6 +217,16 @@ export function Sidebar() {
       </div>
     </aside>
   );
+}
+
+// Resolve the icon for a starred path by matching against the DoctypeConfig
+// registry. Falls back to the Star icon for paths that aren't ListView pages
+// (rare today but possible if a user stars a custom URL later).
+function iconForPath(p: string): React.ComponentType<{ className?: string }> {
+  for (const d of Object.values(doctypes)) {
+    if (`${d.modulePath}/${d.slug}` === p) return d.icon;
+  }
+  return Star;
 }
 
 function WorkspaceSwitcher({ collapsed }: { collapsed: boolean }) {
