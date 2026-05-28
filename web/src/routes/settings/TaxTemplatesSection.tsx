@@ -184,7 +184,8 @@ function TemplatesTab() {
 function TemplateRow({
   template, expanded, onToggle,
 }: { template: TaxTemplate; expanded: boolean; onToggle: () => void }) {
-  const total = template.lines.reduce((sum, l) => sum + Number(l.rate || 0), 0);
+  const lines = template.lines ?? [];
+  const total = lines.reduce((sum, l) => sum + Number(l.rate || 0), 0);
   return (
     <div className={cn(
       'bg-canvas border rounded-lg transition-colors',
@@ -207,7 +208,7 @@ function TemplateRow({
             {template.is_default && <StatusPill tone="accent" withDot={false}><Star className="size-3" /> Default</StatusPill>}
           </div>
           <div className="text-caption text-stone">
-            {template.is_sales ? 'Sales' : 'Purchase'} · {template.lines.length} {template.lines.length === 1 ? 'line' : 'lines'}
+            {template.is_sales ? 'Sales' : 'Purchase'} · {lines.length} {lines.length === 1 ? 'line' : 'lines'}
           </div>
         </div>
         <div className="text-body-sm num text-ink">{total.toFixed(2)}%</div>
@@ -215,7 +216,7 @@ function TemplateRow({
 
       {expanded && (
         <div className="border-t border-hairline p-3 pt-2">
-          {template.lines.length === 0 ? (
+          {lines.length === 0 ? (
             <div className="text-caption text-stone py-2">No lines on this template.</div>
           ) : (
             <table className="w-full text-body-sm">
@@ -228,7 +229,7 @@ function TemplateRow({
                 </tr>
               </thead>
               <tbody>
-                {template.lines.map((l) => (
+                {lines.map((l) => (
                   <tr key={l.id} className="border-t border-hairline">
                     <td className="py-2 text-ink">{l.description}</td>
                     <td className="py-2 text-steel">{l.charge_type}</td>

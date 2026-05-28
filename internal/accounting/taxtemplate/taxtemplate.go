@@ -310,15 +310,43 @@ func (s *Service) ListTemplates(ctx context.Context, companyID string) ([]TaxTem
 		return nil, err
 	}
 	defer rows.Close()
-	var out []TaxTemplate
+	out := []TaxTemplate{}
+	byID := map[string]int{} // template_id → index in out
+	ids := []string{}
 	for rows.Next() {
-		var t TaxTemplate
+		t := TaxTemplate{Lines: []TaxTemplateLine{}}
 		if err := rows.Scan(&t.ID, &t.CompanyID, &t.Name, &t.IsSales, &t.IsDefault, &t.TaxCategoryID, &t.CreatedAt, &t.UpdatedAt); err != nil {
 			return nil, err
 		}
+		byID[t.ID] = len(out)
+		ids = append(ids, t.ID)
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	lineRows, err := s.db.Query(ctx, `
+		SELECT template_id, id, row_index, account_id, description, rate, charge_type, included_in_basic_rate, coalesce(cost_center_id,'')
+		FROM tax_template_line WHERE template_id = ANY($1) ORDER BY template_id, row_index`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var tplID string
+		var l TaxTemplateLine
+		if err := lineRows.Scan(&tplID, &l.ID, &l.RowIndex, &l.AccountID, &l.Description, &l.Rate,
+			&l.ChargeType, &l.IncludedInBasicRate, &l.CostCenterID); err != nil {
+			return nil, err
+		}
+		if i, ok := byID[tplID]; ok {
+			out[i].Lines = append(out[i].Lines, l)
+		}
+	}
+	return out, lineRows.Err()
 }
 
 func (s *Service) GetTemplate(ctx context.Context, id string) (*TaxTemplate, error) {
