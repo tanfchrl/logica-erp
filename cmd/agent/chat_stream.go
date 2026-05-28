@@ -32,7 +32,7 @@ import (
 //	event: done        {session_id, turn}            terminal
 //	event: error       {message}                     terminal on failure
 func chatStreamHandler(
-	store *session.Store, rec *audit.Recorder, ll *llm.Client,
+	store *session.Store, rec *audit.Recorder, provider LLMProvider,
 	registry *agentcontract.Registry, toolReg *tools.Registry, gate *policy.Gate,
 	apvStore *approvals.Store,
 ) http.HandlerFunc {
@@ -45,6 +45,9 @@ func chatStreamHandler(
 		}
 		co := auth.CompanyFromContext(ctx)
 		erpcc := erpclient.CallContext{Token: httpx.BearerFromContext(ctx), CompanyID: co}
+		// Per-company BYOM resolution — re-read on every request so a
+		// Settings change takes effect on the next turn (modulo TTL).
+		ll := provider.ForCompany(ctx, co)
 
 		var in chatInBody
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {

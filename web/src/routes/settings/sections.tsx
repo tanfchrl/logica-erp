@@ -14,6 +14,7 @@ import { AuditLogSection }       from './AuditLogSection';
 import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { AgentUsageSection }     from './AgentUsageSection';
 import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
+import { AIModelSection }        from './AIModelSection';
 import { BuyingSettingsSection }  from './BuyingSettingsSection';
 import { AssetSettingsSection }   from './AssetSettingsSection';
 import { CustomFieldsSection }    from './CustomFieldsSection';
@@ -173,6 +174,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'agent-usage', group: 'system', label: 'AI usage & cost', icon: Sparkles,
     description: 'Token use and IDR cost by day, user, and model.',
     component: AgentUsageSection, requireSystem: true },
+  { key: 'ai-model', group: 'system', label: 'AI model (BYOM)', icon: Sparkles,
+    description: 'Point the agent at any OpenAI-compatible chat endpoint per company.',
+    component: AIModelSection, requireSystem: true },
   { key: 'ai-policy-limits', group: 'system', label: 'AI policy limits', icon: ShieldCheck,
     description: 'Per-doctype IDR caps the agent must stay under on Tier-1 drafts.',
     component: AIPolicyLimitsSection, requireSystem: true },

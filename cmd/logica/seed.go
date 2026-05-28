@@ -368,6 +368,7 @@ var phase0Doctypes = []string{
 	"approval_rule",
 	"import_job",
 	"webhook_subscription", "api_token", "connector_config", "notification_rule", "payroll_setting",
+	"agent_llm_config",
 }
 
 func ensureFullPermissions(ctx context.Context, tx *sql.Tx, roleID string) error {

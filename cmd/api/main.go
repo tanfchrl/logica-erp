@@ -22,6 +22,8 @@ import (
 	"github.com/tandigital/logica-erp/internal/accounting/customer"
 	"github.com/tandigital/logica-erp/internal/accounting/item"
 	"github.com/tandigital/logica-erp/internal/accounting/journalentry"
+	"github.com/tandigital/logica-erp/internal/agent/agentllmconfig"
+	"github.com/tandigital/logica-erp/internal/agent/llm"
 	"github.com/tandigital/logica-erp/internal/accounting/efaktur"
 	"github.com/tandigital/logica-erp/internal/accounting/fiscalyear"
 	"github.com/tandigital/logica-erp/internal/accounting/paymententry"
@@ -143,6 +145,25 @@ func main() {
 	financeBookSvc := financebook.NewService(db)
 	assetVASvc := assetvalueadjustment.NewService(db)
 	assetSettingsSvc := assetsettings.NewService(db)
+	// Per-company BYOM config: the API exposes the admin endpoints so the
+	// Settings UI can read/write. The agent process consults the same table
+	// at chat time. AGENT_CONFIG_ENCRYPTION_KEY must match between processes;
+	// optional here because no decryption happens on this side (Save only
+	// encrypts on write, Get returns last4 only).
+	agentLLMEnc, agentLLMEncErr := agentllmconfig.NewEncrypter(os.Getenv("AGENT_CONFIG_ENCRYPTION_KEY"))
+	if agentLLMEncErr != nil {
+		logger.Error("api: AGENT_CONFIG_ENCRYPTION_KEY invalid", "err", agentLLMEncErr)
+		os.Exit(1)
+	}
+	agentLLMModel := os.Getenv("AGENT_LLM_MODEL")
+	if agentLLMModel == "" {
+		agentLLMModel = "gpt-4o-mini"
+	}
+	agentLLMSvc := agentllmconfig.NewService(db, agentLLMEnc, llm.Config{
+		BaseURL: os.Getenv("AGENT_LLM_BASE_URL"),
+		APIKey:  os.Getenv("AGENT_LLM_API_KEY"),
+		Model:   agentLLMModel,
+	})
 	assetReportSvc := assetreports.NewService(db)
 	// PI's fixed-asset auto-create hook depends on assetSvc, declared
 	// above. Setting it here keeps the declaration order acyclic.
@@ -306,6 +327,7 @@ func main() {
 		assetvalueadjustment.Register(hapi, &assetvalueadjustment.Handler{Service: assetVASvc, Perm: perm})
 		assetsettings.Register(hapi, &assetsettings.Handler{Service: assetSettingsSvc, Perm: perm})
 		assetreports.Register(hapi, &assetreports.Handler{Service: assetReportSvc, Perm: perm})
+		agentllmconfig.Register(hapi, &agentllmconfig.Handler{Service: agentLLMSvc})
 
 		// Phase 5
 		employee.Register(hapi, &employee.Handler{Service: empSvc, Perm: perm})

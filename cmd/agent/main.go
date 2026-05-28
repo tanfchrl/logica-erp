@@ -28,6 +28,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/cors"
 
+	"github.com/tandigital/logica-erp/internal/agent/agentllmconfig"
 	"github.com/tandigital/logica-erp/internal/agent/approvals"
 	"github.com/tandigital/logica-erp/internal/agent/audit"
 	"github.com/tandigital/logica-erp/internal/agent/migration"
@@ -86,7 +87,23 @@ func main() {
 	auditQuery := audit.NewQuery(db)
 	costSvc := audit.NewCostService(db)
 	sessStore := session.New(db)
-	llmClient := llm.New(llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel})
+	envLLM := llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel}
+	llmClient := llm.New(envLLM)
+	// BYOM provider — per-company config from agent_llm_config, with the
+	// env-built client as fallback. Encrypter is optional: if the key env
+	// is unset, the service still works for the no-key fallback path but
+	// can't decrypt stored ciphertexts (it logs and falls back to env).
+	encKey := os.Getenv("AGENT_CONFIG_ENCRYPTION_KEY")
+	enc, encErr := agentllmconfig.NewEncrypter(encKey)
+	if encErr != nil {
+		logger.Error("agent: AGENT_CONFIG_ENCRYPTION_KEY invalid", "err", encErr)
+		os.Exit(1)
+	}
+	if enc == nil {
+		logger.Warn("agent: AGENT_CONFIG_ENCRYPTION_KEY not set — BYOM keys cannot be decrypted; falling back to env LLM config")
+	}
+	llmCfgSvc := agentllmconfig.NewService(db, enc, envLLM)
+	var llmProvider LLMProvider = llmCfgSvc
 	erp := erpclient.New(erpBase)
 	toolReg := tools.New(erp, registry)
 	apvStore := approvals.New(db)
@@ -126,7 +143,7 @@ func main() {
 
 		hapi := humachi.New(api, humaCfg)
 
-		registerChat(hapi, sessStore, rec, llmClient, registry, toolReg, gate, apvStore)
+		registerChat(hapi, sessStore, rec, llmProvider, registry, toolReg, gate, apvStore)
 		registerSessions(hapi, sessStore)
 		registerApprovals(hapi, apvStore, rec)
 		registerMigration(hapi, migrationSvc)
@@ -134,12 +151,16 @@ func main() {
 		audit.RegisterAdmin(hapi, auditQuery)
 		audit.RegisterCosts(hapi, costSvc)
 		policy.RegisterAdmin(hapi, policyLimits)
+		// BYOM admin endpoints — same handlers run on the API service. The
+		// agent registers them too so the FE can hit either origin; reload
+		// here drops the agent process's own per-company cache.
+		agentllmconfig.Register(hapi, &agentllmconfig.Handler{Service: llmCfgSvc})
 
 		// SSE streaming chat. Goes through the same Auth middleware (the
 		// chi router scope above), but bypasses huma — huma's openapi
 		// shape doesn't model text/event-stream well, and we want full
 		// control over flushing.
-		api.Post("/chat/stream", chatStreamHandler(sessStore, rec, llmClient, registry, toolReg, gate, apvStore))
+		api.Post("/chat/stream", chatStreamHandler(sessStore, rec, llmProvider, registry, toolReg, gate, apvStore))
 	})
 
 	srv := &http.Server{
@@ -211,7 +232,7 @@ func registerSessions(api huma.API, store *session.Store) {
 // "find the customer and show me their AR aging" which usually take 2-3 hops.
 const maxToolIterations = 6
 
-func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *llm.Client,
+func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, provider LLMProvider,
 	registry *agentcontract.Registry, toolReg *tools.Registry, gate *policy.Gate, apvStore *approvals.Store) {
 	huma.Register(api, huma.Operation{
 		OperationID: "agent-chat",
@@ -225,6 +246,10 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, ll *l
 			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
 		}
 		co := auth.CompanyFromContext(ctx)
+		// Per-company BYOM resolution — re-read on every request so a Save
+		// in the Settings UI takes effect on the next turn (modulo the
+		// service's cache TTL).
+		ll := provider.ForCompany(ctx, co)
 
 		// Forward the user's JWT to the ERP API on tool calls. The agent
 		// never holds its own credential.
