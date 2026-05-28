@@ -45,7 +45,17 @@ export function CreateFormPage({ config, schema, editMode = false }: CreateFormP
   }, [schema]);
   const [values, setValues] = useState<Record<string, any>>(initial);
   const set = (name: string, v: any) => {
-    setValues((s) => ({ ...s, [name]: v }));
+    setValues((s) => {
+      const next = { ...s, [name]: v };
+      // linkSwitch: when a trigger field changes, clear every dependent
+      // link field — the old id won't exist under the new target.
+      for (const f of schema.fields) {
+        if (f.kind === 'link' && f.linkSwitch?.triggerField === name) {
+          next[f.name] = '';
+        }
+      }
+      return next;
+    });
     // schema.prefillFromLink — when the trigger field changes, GET the linked
     // resource and copy mapped properties onto local fields. Empty-string
     // selections clear the dependent fields so the user starts clean if they
@@ -227,6 +237,7 @@ export function CreateFormPage({ config, schema, editMode = false }: CreateFormP
                   field={f}
                   value={values[f.name]}
                   onChange={(v) => set(f.name, v)}
+                  formValues={values}
                 />
               </div>
             ))}
@@ -238,8 +249,31 @@ export function CreateFormPage({ config, schema, editMode = false }: CreateFormP
 }
 
 // ----- Individual field renderer -----
-function FieldControl({ field, value, onChange }: { field: FieldDef; value: any; onChange: (v: any) => void }) {
+function FieldControl({
+  field, value, onChange, formValues,
+}: { field: FieldDef; value: any; onChange: (v: any) => void; formValues: Record<string, any> }) {
   const fieldId = `f-${field.name}`;
+
+  // linkSwitch: resolve the effective endpoint/label from a sibling field's
+  // current value. When the trigger isn't set yet, render the picker
+  // disabled with a guidance hint.
+  let effective = field;
+  let linkDisabledHint: string | undefined;
+  if (field.kind === 'link' && field.linkSwitch) {
+    const triggerVal = formValues[field.linkSwitch.triggerField];
+    const cfg = triggerVal ? field.linkSwitch.byValue[triggerVal] : undefined;
+    if (cfg) {
+      effective = {
+        ...field,
+        linkEndpoint:   cfg.endpoint,
+        linkLabel:      cfg.label ?? field.linkLabel,
+        linkDescription: cfg.description ?? field.linkDescription,
+      };
+    } else {
+      effective = { ...field, linkEndpoint: undefined };
+      linkDisabledHint = `Choose ${field.linkSwitch.triggerField.replace(/_/g, ' ')} first.`;
+    }
+  }
 
   switch (field.kind) {
     case 'text':
@@ -303,8 +337,8 @@ function FieldControl({ field, value, onChange }: { field: FieldDef; value: any;
       );
     case 'link':
       return (
-        <Field label={field.label + (field.required ? ' *' : '')} htmlFor={fieldId} hint={field.hint}>
-          <LinkPicker field={field} value={value ?? null} onChange={onChange} />
+        <Field label={effective.label + (effective.required ? ' *' : '')} htmlFor={fieldId} hint={linkDisabledHint ?? effective.hint}>
+          <LinkPicker field={effective} value={value ?? null} onChange={onChange} />
         </Field>
       );
   }

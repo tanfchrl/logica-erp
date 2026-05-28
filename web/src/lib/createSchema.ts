@@ -16,10 +16,25 @@ export interface FieldDef {
   hint?: string;
   // for 'select'
   options?: { value: string; label: string }[];
-  // for 'link'
+  // for 'link' — static target
   linkEndpoint?: string;   // GET endpoint that returns { items: [...] }
   linkLabel?: string;      // field on each item to display (default: 'display_name' or 'name')
   linkDescription?: string;
+  /**
+   * for 'link' — target depends on the value of another field on this form.
+   * Used by Opportunity (party_id depends on opportunity_from) and
+   * Contact (parent_id depends on parent_doctype). When the trigger field
+   * has no value yet, the picker renders disabled with a hint; when it
+   * changes, the dependent field is cleared automatically.
+   */
+  linkSwitch?: {
+    triggerField: string;
+    byValue: Record<string, {
+      endpoint: string;
+      label?: string;
+      description?: string;
+    }>;
+  };
   // optional default value
   default?: string | number | boolean;
   // column span 1 (half) or 2 (full)
@@ -222,8 +237,14 @@ export const opportunityCreate: CreateSchema = {
         { value: 'lead',     label: 'Lead' },
         { value: 'customer', label: 'Customer' },
       ] },
-    { name: 'party_id', label: 'Party id', kind: 'text', required: true,
-      hint: 'Paste the id of the lead or customer. Picker UI coming next iteration.' },
+    { name: 'party_id', label: 'For', kind: 'link', required: true,
+      linkSwitch: {
+        triggerField: 'opportunity_from',
+        byValue: {
+          lead:     { endpoint: '/crm/leads',              label: 'lead_name',    description: 'name' },
+          customer: { endpoint: '/accounting/customers',   label: 'display_name', description: 'name' },
+        },
+      } },
     { name: 'amount',   label: 'Expected amount', kind: 'money' },
     { name: 'currency', label: 'Currency', kind: 'select', default: 'IDR',
       options: [{ value: 'IDR', label: 'IDR' }, { value: 'USD', label: 'USD' }, { value: 'SGD', label: 'SGD' }] },
@@ -252,8 +273,15 @@ export const contactCreate: CreateSchema = {
         { value: 'supplier', label: 'Supplier' },
         { value: 'lead',     label: 'Lead' },
       ] },
-    { name: 'parent_id',     label: 'Belongs to (id)', kind: 'text', required: true,
-      hint: 'Paste the id of the customer/supplier/lead this person works at. Picker UI coming next iteration.' },
+    { name: 'parent_id',     label: 'Belongs to', kind: 'link', required: true,
+      linkSwitch: {
+        triggerField: 'parent_doctype',
+        byValue: {
+          customer: { endpoint: '/accounting/customers', label: 'display_name', description: 'name' },
+          supplier: { endpoint: '/accounting/suppliers', label: 'display_name', description: 'name' },
+          lead:     { endpoint: '/crm/leads',            label: 'lead_name',    description: 'name' },
+        },
+      } },
     { name: 'job_title',     label: 'Job title', kind: 'text' },
     { name: 'email',         label: 'Email',     kind: 'text' },
     { name: 'phone',         label: 'Phone',     kind: 'text' },
