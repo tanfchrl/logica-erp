@@ -1,5 +1,5 @@
 import {
-  createRootRoute, createRoute, createRouter, redirect, Outlet,
+  createRootRoute, createRoute, createRouter, redirect, Outlet, Link,
 } from '@tanstack/react-router';
 import { getAccessToken } from './lib/api';
 import { refresh } from './lib/auth';
@@ -16,6 +16,9 @@ import { SalesInvoiceForm } from './routes/SalesInvoiceForm';
 import { PurchaseInvoiceForm } from './routes/PurchaseInvoiceForm';
 import { PurchaseOrderForm } from './routes/PurchaseOrderForm';
 import { MaterialRequestForm } from './routes/MaterialRequestForm';
+import { OpportunityBoard } from './routes/OpportunityBoard';
+import { Button } from './components/Button';
+import { Columns3 } from 'lucide-react';
 import { PurchaseReceiptForm } from './routes/PurchaseReceiptForm';
 import { JournalEntryForm } from './routes/JournalEntryForm';
 import { ReportsPage } from './routes/Reports';
@@ -71,6 +74,7 @@ const piNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accoun
 const piEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-invoices/$id', component: PurchaseInvoiceForm });
 const poNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/new',   component: PurchaseOrderForm });
 const poEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/$id',   component: PurchaseOrderForm });
+const oppBoardRoute = createRoute({ getParentRoute: () => appRoute, path: '/crm/opportunities/board', component: OpportunityBoard });
 const mrNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/new', component: MaterialRequestForm });
 const mrEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/$id', component: MaterialRequestForm });
 const grnNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/stock/purchase-receipts/new', component: PurchaseReceiptForm });
@@ -91,6 +95,7 @@ const SKIP_LIST = new Set([
   '/accounting/material-requests',  // MR same pattern
   '/stock/purchase-receipts',       // GRN same pattern
   '/accounting/journal-entries',    // same as SI
+  '/crm/opportunities',             // bespoke list — adds Board view toggle
 ]);
 
 const doctypeListRoutes = Object.values(doctypes)
@@ -110,6 +115,17 @@ const poListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accoun
 const mrListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests', component: () => <ListView config={doctypes.materialRequests!} /> });
 const grnListRoute = createRoute({ getParentRoute: () => appRoute, path: '/stock/purchase-receipts',     component: () => <ListView config={doctypes.purchaseReceipts!} /> });
 const jeListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries',   component: () => <ListView config={doctypes.journalEntries!} /> });
+const oppListRoute = createRoute({
+  getParentRoute: () => appRoute, path: '/crm/opportunities',
+  component: () => (
+    <ListView config={doctypes.opportunities!}
+      extraActions={
+        <Button variant="secondary" asChild>
+          <Link to={'/crm/opportunities/board' as never}><Columns3 className="size-4" /> Board</Link>
+        </Button>
+      } />
+  ),
+});
 
 // Auto-built /new routes for every doctype that has a create schema and no bespoke form.
 const BESPOKE_NEW = new Set(['/accounting/sales-invoices', '/accounting/purchase-invoices', '/accounting/purchase-orders', '/accounting/material-requests', '/stock/purchase-receipts', '/accounting/journal-entries']);
@@ -181,6 +197,7 @@ const routeTree = rootRoute.addChildren([
     piNewRoute, piEditRoute, piListRoute,
     poNewRoute, poEditRoute, poListRoute,
     mrNewRoute, mrEditRoute, mrListRoute,
+    oppBoardRoute, oppListRoute,
     grnNewRoute, grnEditRoute, grnListRoute,
     jeNewRoute, jeEditRoute, jeListRoute,
     reportsIndex, reportsKind,
