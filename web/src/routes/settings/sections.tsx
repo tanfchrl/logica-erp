@@ -124,7 +124,7 @@ export const SECTIONS: SectionDef[] = [
     description: 'Per-event subject + body templates.',
     component: EmailTemplatesSection, requireSystem: true },
   { key: 'notifications', group: 'comms', label: 'Notification rules', icon: Bell,
-    description: 'Event → recipient → channel routing (storage only; engine wiring next).',
+    description: 'Event → recipient → channel routing. Fires in-app + email on invoice issued / payment received / PO sent / overdue / approval events.',
     component: NotificationRulesSection, requireSystem: true },
 
   // ----- Integrations -----

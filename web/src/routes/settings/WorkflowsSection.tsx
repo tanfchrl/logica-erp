@@ -70,9 +70,13 @@ export function WorkflowsSection() {
       <div className="rounded-lg border border-hairline bg-surface-soft p-3 flex items-start gap-3">
         <ShieldCheck className="size-4 text-stone shrink-0 mt-0.5" />
         <div className="text-caption text-stone">
-          <strong className="text-charcoal">Configure here; engine wiring is next.</strong>
-          {' '}You can define workflows and approval rules now. Hooking them into the document submit
-          pipeline (so submitting an SI actually waits for approval) is a follow-up that touches every submittable doctype.
+          <strong className="text-charcoal">Live.</strong>{' '}
+          Workflows and approval rules are enforced at submit time on
+          Sales Invoice, Purchase Invoice, Purchase Order, Material
+          Request, Purchase Receipt, Payment Entry, and Journal Entry.
+          State-machine driving of arbitrary state columns is still on
+          the backlog — for now the gate is role-based on the submit
+          transition.
         </div>
       </div>
 

@@ -204,6 +204,10 @@ func main() {
 	notifier := notifrules.NewDispatcher(db, emailSvc)
 	// Background worker drains notification_dispatch with exponential backoff.
 	go notifier.RunWorker(ctx, 10*time.Second)
+	// Daily-cadence scan: fires invoice.overdue at most once per (invoice,
+	// calendar day). Tick is hourly to catch invoices whose due_date rolls
+	// over mid-day; the inside-day dedup is via notification_dispatch.
+	go notifier.RunOverdueScan(ctx, time.Hour)
 	// Partition manager keeps doc_event (monthly) + doc_view (daily) aligned.
 	go audit.NewPartitionManager(db).Run(ctx)
 	sysHealthSvc := sysinsights.NewService(db)
@@ -225,6 +229,7 @@ func main() {
 	jeSvc.Workflow = workflowEng
 	siSvc.Notifier = notifier
 	peSvc.Notifier = notifier
+	poSvc.Notifier = notifier
 	pcvSvc.Approvals = approvalEng
 	payrollSvc.Approvals = approvalEng
 	bomSvc.Approvals = approvalEng

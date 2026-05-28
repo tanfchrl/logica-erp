@@ -167,6 +167,9 @@ type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
 	Workflow  workflowGate
+	// Notifier is optional. When set, Submit() fires `po.sent` after the
+	// document successfully transitions to docstatus 1.
+	Notifier notifier
 }
 
 type approvalChecker interface {
@@ -175,6 +178,10 @@ type approvalChecker interface {
 
 type workflowGate interface {
 	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -501,6 +508,18 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseOrder, error)
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		gt, _ := out.GrandTotal.Float64()
+		s.Notifier.Fire("po.sent", map[string]any{
+			"company_id":    out.CompanyID,
+			"doctype":       Doctype,
+			"document_id":   out.ID,
+			"document_name": out.Name,
+			"grand_total":   gt,
+			"summary":       fmt.Sprintf("Purchase order %s sent to supplier", out.Name),
+			"PO":            out,
+		})
+	}
 	return &out, err
 }
 
