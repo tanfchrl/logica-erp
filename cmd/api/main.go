@@ -239,11 +239,17 @@ func main() {
 	soSvc.Workflow = workflowEng
 	tsSvc.Workflow = workflowEng
 	pcvSvc.Approvals = approvalEng
+	pcvSvc.Workflow = workflowEng
 	payrollSvc.Approvals = approvalEng
+	payrollSvc.Workflow = workflowEng
 	bomSvc.Approvals = approvalEng
+	bomSvc.Workflow = workflowEng
 	woSvc.Approvals = approvalEng
+	woSvc.Workflow = workflowEng
 	steSvc.Approvals = approvalEng
+	steSvc.Workflow = workflowEng
 	assetSvc.Approvals = approvalEng
+	assetSvc.Workflow = workflowEng
 
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID)

@@ -1,7 +1,9 @@
 // Package workflow exposes admin CRUD over the workflow / workflow_state /
-// workflow_transition tables, plus the approval_rule definitions. The
-// runtime engine that consults these and gates document submit is a separate
-// concern, not yet wired into doctype services.
+// workflow_transition tables, plus the approval_rule definitions, and the
+// runtime Engine that gates document submit on role. Engine.CheckSubmitRole
+// is wired into every transactional doctype's Submit() (SI, PI, PE, JE, SO,
+// PO, MR, PR, Stock Entry, BOM, Work Order, Asset, Payroll Entry, Period
+// Closing Voucher, Timesheet).
 package workflow
 
 import (

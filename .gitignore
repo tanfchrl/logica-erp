@@ -40,3 +40,4 @@ coverage.html
 
 # Generated
 /web/src/lib/api/generated/
+/agent

@@ -57,10 +57,15 @@ type PCVCreateInput struct {
 type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
+	Workflow  workflowGate
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -125,6 +130,11 @@ func (s *Service) Submit(ctx context.Context, id string) (*PeriodClosingVoucher,
 		}
 		if pcv.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "period_closing_voucher"); err != nil {
+				return err
+			}
 		}
 		if s.Approvals != nil {
 			if err := s.Approvals.CheckSubmit(ctx, tx, "period_closing_voucher", pcv.ID, pcv.Name, pcv.CompanyID,

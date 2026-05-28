@@ -105,10 +105,15 @@ type StockEntryLineInput struct {
 type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
+	Workflow  workflowGate
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -252,6 +257,11 @@ func (s *Service) Submit(ctx context.Context, id string) (*StockEntry, error) {
 		}
 		if se.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "stock_entry"); err != nil {
+				return err
+			}
 		}
 		if s.Approvals != nil {
 			outV, _ := se.TotalOutgoingValue.Float64()

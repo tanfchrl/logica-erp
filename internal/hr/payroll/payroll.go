@@ -103,10 +103,15 @@ type PayrollEntryCreateInput struct {
 type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
+	Workflow  workflowGate
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -354,6 +359,11 @@ func (s *Service) Submit(ctx context.Context, id string) (*PayrollEntry, error) 
 		}
 		if pe.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "payroll_entry"); err != nil {
+				return err
+			}
 		}
 		if s.Approvals != nil {
 			net, _ := pe.TotalNet.Float64()

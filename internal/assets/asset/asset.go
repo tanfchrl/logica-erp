@@ -101,10 +101,15 @@ type AssetCreateInput struct {
 type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
+	Workflow  workflowGate
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type workflowGate interface {
+	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -346,6 +351,11 @@ func (s *Service) Submit(ctx context.Context, id string) (*Asset, error) {
 		}
 		if a.Docstatus != submittable.Draft {
 			return submittable.ErrNotDraft
+		}
+		if s.Workflow != nil {
+			if err := s.Workflow.CheckSubmitRole(ctx, tx, "asset"); err != nil {
+				return err
+			}
 		}
 		if s.Approvals != nil {
 			cost, _ := a.GrossPurchaseAmount.Float64()
