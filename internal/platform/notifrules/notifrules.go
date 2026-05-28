@@ -29,6 +29,7 @@ var EventCatalog = []NotifEventDef{
 	{Key: "invoice.overdue",          Label: "Sales invoice overdue"},
 	{Key: "invoice.payment_received", Label: "Payment received"},
 	{Key: "po.sent",                  Label: "Purchase order sent"},
+	{Key: "so.submitted",             Label: "Sales order submitted"},
 	{Key: "approval.requested",       Label: "Approval requested"},
 	{Key: "approval.decided",         Label: "Approval decided"},
 }

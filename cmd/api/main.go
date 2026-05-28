@@ -40,6 +40,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/stock/purchasereceipt"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseinvoice"
 	"github.com/tandigital/logica-erp/internal/accounting/purchaseorder"
+	"github.com/tandigital/logica-erp/internal/accounting/salesorder"
 	"github.com/tandigital/logica-erp/internal/accounting/reports"
 	"github.com/tandigital/logica-erp/internal/accounting/salesinvoice"
 	"github.com/tandigital/logica-erp/internal/accounting/supplier"
@@ -60,6 +61,7 @@ import (
 	"github.com/tandigital/logica-erp/internal/pos"
 	"github.com/tandigital/logica-erp/internal/projects/project"
 	"github.com/tandigital/logica-erp/internal/projects/task"
+	"github.com/tandigital/logica-erp/internal/projects/timesheet"
 	"github.com/tandigital/logica-erp/internal/stock/stockentry"
 	"github.com/tandigital/logica-erp/internal/stock/warehouse"
 	"github.com/tandigital/logica-erp/internal/support/issue"
@@ -118,6 +120,7 @@ func main() {
 	siSvc := salesinvoice.NewService(db)
 	piSvc := purchaseinvoice.NewService(db)
 	poSvc := purchaseorder.NewService(db)
+	soSvc := salesorder.NewService(db)
 	mrSvc := materialrequest.NewService(db, poSvc)
 	prSvc := purchasereceipt.NewService(db, poSvc)
 	buyingSettingsSvc := buyingsettings.NewService(db)
@@ -138,6 +141,7 @@ func main() {
 	customFieldAdminSvc := customfield.NewAdminService(db)
 	projSvc := project.NewService(db)
 	taskSvc := task.NewService(db)
+	tsSvc   := timesheet.NewService(db)
 	bomSvc := bom.NewService(db)
 	woSvc := workorder.NewService(db)
 	assetSvc := asset.NewService(db)
@@ -230,6 +234,10 @@ func main() {
 	siSvc.Notifier = notifier
 	peSvc.Notifier = notifier
 	poSvc.Notifier = notifier
+	soSvc.Notifier = notifier
+	soSvc.Approvals = approvalEng
+	soSvc.Workflow = workflowEng
+	tsSvc.Workflow = workflowEng
 	pcvSvc.Approvals = approvalEng
 	payrollSvc.Approvals = approvalEng
 	bomSvc.Approvals = approvalEng
@@ -306,6 +314,7 @@ func main() {
 		salesinvoice.Register(hapi, &salesinvoice.Handler{Service: siSvc, Perm: perm, DB: db, PrintRenderer: printRenderer, PrintAdmin: printAdminSvc})
 		purchaseinvoice.Register(hapi, &purchaseinvoice.Handler{Service: piSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
 		purchaseorder.Register(hapi, &purchaseorder.Handler{Service: poSvc, Perm: perm, DB: db, PrintAdmin: printAdminSvc})
+		salesorder.Register(hapi, &salesorder.Handler{Service: soSvc, Perm: perm})
 		materialrequest.Register(hapi, &materialrequest.Handler{Service: mrSvc, Perm: perm})
 		purchasereceipt.Register(hapi, &purchasereceipt.Handler{Service: prSvc, Perm: perm})
 		buyingsettings.Register(hapi, &buyingsettings.Handler{Service: buyingSettingsSvc, Perm: perm})
@@ -325,6 +334,7 @@ func main() {
 		customfield.RegisterAdmin(hapi, &customfield.AdminHandler{Service: customFieldAdminSvc})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
 		task.Register(hapi, &task.Handler{Service: taskSvc, Perm: perm})
+		timesheet.Register(hapi, &timesheet.Handler{Service: tsSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})
 		workorder.Register(hapi, &workorder.Handler{Service: woSvc, Perm: perm})
 		asset.Register(hapi, &asset.Handler{Service: assetSvc, Perm: perm})

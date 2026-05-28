@@ -353,6 +353,8 @@ func defaultMessage(eventKey string, p map[string]any) (subject, body string) {
 		subject = "Invoice " + name + " is overdue"
 	case "po.sent":
 		subject = "Purchase order " + name + " sent to supplier"
+	case "so.submitted":
+		subject = "Sales order " + name + " submitted"
 	case "approval.requested":
 		subject = "Approval needed: " + name
 	case "approval.decided":
