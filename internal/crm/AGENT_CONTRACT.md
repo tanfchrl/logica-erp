@@ -21,6 +21,12 @@ documents:
     tier0_tools: [list_with_filters, get_by_id]
     tier1_tools: [create_draft, set_stage]
     tier2_tools: []
+  - name: note
+    display_name: "Note"
+    api_path: "/crm/notes"
+    tier0_tools: [list_with_filters, get_by_id]
+    tier1_tools: [create_draft]
+    tier2_tools: []
 system_context: |
   The CRM module manages the pre-sales pipeline. A Lead represents an
   unqualified contact captured from marketing channels, referrals, or
