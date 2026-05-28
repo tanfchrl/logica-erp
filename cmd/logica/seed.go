@@ -344,6 +344,8 @@ var phase0Doctypes = []string{
 	"asset_category", "asset_movement", "asset_value_adjustment",
 	"asset_location",
 	"finance_book", "asset_settings",
+	// CRM v1 (post-launch additions)
+	"contact", "opportunity", "note",
 	// Phase 3
 	"lead", "project", "task", "timesheet",
 	// Phase 4
