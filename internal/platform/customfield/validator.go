@@ -4,6 +4,7 @@ package customfield
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -33,7 +34,27 @@ type Definition struct {
 	FieldType    FieldType
 	IsRequired   bool
 	DefaultValue *string
-	Options      map[string]any
+	// Parsed options. For TypeSelect, SelectValues holds the allowed strings;
+	// for TypeLink, LinkDoctype constrains the link target.
+	SelectValues []string
+	LinkDoctype  string
+}
+
+// optionsShape mirrors the admin-side schema documented on FieldDefInput.Options.
+type optionsShape struct {
+	Values  []string `json:"values,omitempty"`
+	Doctype string   `json:"doctype,omitempty"`
+}
+
+func parseOptions(optsJSON []byte) (selectValues []string, linkDoctype string, err error) {
+	if len(optsJSON) == 0 {
+		return nil, "", nil
+	}
+	var o optionsShape
+	if err := json.Unmarshal(optsJSON, &o); err != nil {
+		return nil, "", fmt.Errorf("custom_field_definition.options: invalid JSON: %w", err)
+	}
+	return o.Values, o.Doctype, nil
 }
 
 type Validator struct {
@@ -92,10 +113,11 @@ func (v *Validator) definitionsFor(ctx context.Context, doctype string) (map[str
 		if err := rows.Scan(&d.FieldName, &d.FieldType, &d.IsRequired, &d.DefaultValue, &optsJSON); err != nil {
 			return nil, err
 		}
-		if len(optsJSON) > 0 {
-			// options stored as jsonb; deferred until needed
-			d.Options = map[string]any{}
+		sv, ld, err := parseOptions(optsJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s.%s: %w", doctype, d.FieldName, err)
 		}
+		d.SelectValues, d.LinkDoctype = sv, ld
 		out[d.FieldName] = d
 	}
 	return out, rows.Err()
@@ -106,10 +128,25 @@ func coerce(def Definition, raw any) (any, error) {
 		return nil, nil
 	}
 	switch def.FieldType {
-	case TypeText, TypeSelect:
+	case TypeText:
 		if s, ok := raw.(string); ok {
 			return s, nil
 		}
+	case TypeSelect:
+		s, ok := raw.(string)
+		if !ok {
+			break
+		}
+		if len(def.SelectValues) == 0 {
+			// No constraint defined — accept any string.
+			return s, nil
+		}
+		for _, v := range def.SelectValues {
+			if v == s {
+				return s, nil
+			}
+		}
+		return nil, fmt.Errorf("%q not in allowed values %v", s, def.SelectValues)
 	case TypeInt:
 		switch x := raw.(type) {
 		case int, int32, int64:
@@ -152,14 +189,19 @@ func coerce(def Definition, raw any) (any, error) {
 			return s, nil
 		}
 	case TypeLink:
-		if m, ok := raw.(map[string]any); ok {
-			if _, hasType := m["type"]; hasType {
-				if _, hasID := m["id"]; hasID {
-					return m, nil
-				}
-			}
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return nil, errors.New(`expected {"type":"...", "id":"..."}`)
 		}
-		return nil, errors.New(`expected {"type":"...", "id":"..."}`)
+		t, _ := m["type"].(string)
+		id, _ := m["id"].(string)
+		if t == "" || id == "" {
+			return nil, errors.New(`expected {"type":"...", "id":"..."}`)
+		}
+		if def.LinkDoctype != "" && t != def.LinkDoctype {
+			return nil, fmt.Errorf("link type %q not allowed (expected %q)", t, def.LinkDoctype)
+		}
+		return m, nil
 	case TypeTable:
 		if a, ok := raw.([]any); ok {
 			return a, nil
@@ -187,6 +229,12 @@ func EnsureTxValidator(ctx context.Context, tx pgx.Tx, doctype string, payload m
 			rows.Close()
 			return nil, err
 		}
+		sv, ld, err := parseOptions(optsJSON)
+		if err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("%s.%s: %w", doctype, d.FieldName, err)
+		}
+		d.SelectValues, d.LinkDoctype = sv, ld
 		defs[d.FieldName] = d
 	}
 	rows.Close()
