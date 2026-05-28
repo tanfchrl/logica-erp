@@ -29,6 +29,7 @@ coverage.html
 /web/dist/
 /web/.vite/
 /web/.pnpm-store/
+/.pnpm-store/
 /web/coverage/
 /web/playwright-report/
 /web/test-results/

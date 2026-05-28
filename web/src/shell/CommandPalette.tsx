@@ -1,16 +1,18 @@
 import { Command } from 'cmdk';
 import * as RD from '@radix-ui/react-dialog';
-import { useEffect } from 'react';
-import { useNavigate } from '@tanstack/react-router';
+import { useEffect, useMemo } from 'react';
+import { useNavigate, useRouterState } from '@tanstack/react-router';
+import { useQuery } from '@tanstack/react-query';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Home, Receipt, Wallet, Package, Warehouse, Factory, Briefcase, Users, UserSquare,
   ClipboardList, Headphones, Settings, Sparkles, Moon, Sun, Plus, FileText, ArrowRight, BarChart3,
-  ShoppingBag, LogOut, Search,
+  ShoppingBag, LogOut, Search, History,
 } from 'lucide-react';
 import { useUI } from '@/store/ui';
 import { Kbd } from '@/components/Kbd';
 import { logout } from '@/lib/auth';
+import { api, getAccessToken, getActiveCompany } from '@/lib/api';
 
 interface PaletteItem {
   id: string;
@@ -24,10 +26,60 @@ interface PaletteItem {
   aiAccent?: boolean;
 }
 
+interface ContractItem {
+  module: string;
+  display_name?: string;
+  suggested_prompts?: string[];
+}
+interface ContractsResp { items: ContractItem[] }
+interface SessionSummary { id: string; title: string; kind: string; updated_at: string }
+interface SessionListResp { items: SessionSummary[] }
+
+// Active module from the URL: the first path segment maps 1:1 to a contract slug
+// (accounting, stock, crm, hr, manufacturing, projects, assets, support, pos).
+function activeModuleFromPath(pathname: string): string | null {
+  const seg = pathname.split('/').filter(Boolean)[0];
+  if (!seg) return null;
+  const known = new Set(['accounting', 'stock', 'crm', 'hr', 'manufacturing', 'projects', 'assets', 'support', 'pos']);
+  return known.has(seg) ? seg : null;
+}
+
+async function fetchAgent<T>(path: string): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  const token = getAccessToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const co = getActiveCompany();
+  if (co) headers['X-Company-Id'] = co;
+  const r = await fetch(path, { headers });
+  const t = await r.text();
+  if (!r.ok) throw new Error(t || r.statusText);
+  return (t ? JSON.parse(t) : {}) as T;
+}
+
 export function CommandPalette() {
   const { paletteOpen, setPaletteOpen, theme, toggleTheme } = useUI();
   const openCopilotWith = useUI((s) => s.openCopilotWith);
+  const openCopilotSession = useUI((s) => s.openCopilotSession);
   const navigate = useNavigate();
+  const router = useRouterState();
+  const activeModule = activeModuleFromPath(router.location.pathname);
+
+  // Contract registry — same source CopilotPanel uses. Cheap to keep around;
+  // we re-derive the active-module slice on every open.
+  const { data: contracts } = useQuery({
+    queryKey: ['agent-contracts'],
+    queryFn:  () => api<ContractsResp>('/agent/contracts'),
+    staleTime: 5 * 60_000,
+  });
+
+  // Recent copilot sessions — fetched lazily, only when the palette opens, so
+  // the user always sees fresh titles after they've named a conversation.
+  const { data: recentSessions } = useQuery({
+    queryKey: ['agent-sessions', 'palette', paletteOpen],
+    queryFn:  () => fetchAgent<SessionListResp>('/api/agent/v1/sessions?kind=copilot'),
+    enabled:  paletteOpen,
+    staleTime: 30_000,
+  });
 
   // ⌘K / Ctrl+K toggle anywhere.
   useEffect(() => {
@@ -44,6 +96,37 @@ export function CommandPalette() {
   const close = () => setPaletteOpen(false);
   const go = (to: string) => () => { close(); void navigate({ to }); };
   const ai = (prompt: string) => () => { close(); openCopilotWith(prompt); };
+  const resumeSession = (sid: string) => () => { close(); openCopilotSession(sid); };
+
+  // Items sourced from the active module's contract: one chip per
+  // `suggested_prompts` entry. Bounded to 6 to keep the section tight.
+  const contractItems: PaletteItem[] = useMemo(() => {
+    if (!activeModule) return [];
+    const c = contracts?.items.find((x) => x.module === activeModule);
+    if (!c?.suggested_prompts?.length) return [];
+    return c.suggested_prompts.slice(0, 6).map((prompt, i): PaletteItem => ({
+      id:        `ai-mod-${activeModule}-${i}`,
+      label:     prompt,
+      keywords:  `ai copilot ${activeModule} ${c.display_name ?? ''}`,
+      icon:      Sparkles,
+      aiAccent:  true,
+      onSelect:  ai(prompt),
+    }));
+  }, [contracts, activeModule]);
+
+  // Recent copilot conversations — picked up by the palette when open. Each
+  // selection re-opens the panel and asks it to load that session's history.
+  const recentSessionItems: PaletteItem[] = useMemo(() => {
+    return (recentSessions?.items ?? []).slice(0, 5).map((s): PaletteItem => ({
+      id:        `ai-session-${s.id}`,
+      label:     s.title || 'Untitled conversation',
+      hint:      new Date(s.updated_at).toLocaleString(),
+      keywords:  `ai copilot session history resume ${s.title}`,
+      icon:      History,
+      aiAccent:  true,
+      onSelect:  resumeSession(s.id),
+    }));
+  }, [recentSessions]);
 
   const primaryActions: PaletteItem[] = [
     { id: 'new-si', label: 'New Sales Invoice', icon: Receipt, shortcut: 'N S', onSelect: go('/accounting/sales-invoices?new=1'), keywords: 'invoice billing' },
@@ -167,6 +250,22 @@ export function CommandPalette() {
                           <Item key={it.id} item={it} />
                         ))}
                       </Command.Group>
+
+                      {contractItems.length > 0 && (
+                        <Command.Group heading={`Tindakan AI · modul aktif`}>
+                          {contractItems.map((it) => (
+                            <Item key={it.id} item={it} />
+                          ))}
+                        </Command.Group>
+                      )}
+
+                      {recentSessionItems.length > 0 && (
+                        <Command.Group heading="Percakapan terakhir">
+                          {recentSessionItems.map((it) => (
+                            <Item key={it.id} item={it} />
+                          ))}
+                        </Command.Group>
+                      )}
 
                       <Command.Group heading="Navigation">
                         {navigation.map((it) => (

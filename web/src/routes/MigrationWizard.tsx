@@ -22,9 +22,11 @@ import { OpeningBalancesStep } from './migration/OpeningBalancesStep';
  *    Future iteration can swap in a Copilot-style chat-driven intake.
  *  - Step 2 (COA): proposal table + accept. Account creation happens via
  *    the standard /accounting/accounts endpoint (operator-triggered).
- *  - Step 3-4: stubbed with explicit "next phase" placeholders. The
- *    underlying APIs (/admin/imports/* and /accounting/journal-entries)
- *    already exist; wiring them into the wizard is incremental work.
+ *  - Step 3 (Data Migration): upload → map → commit, driven by
+ *    /admin/imports/*. See DataMigrationStep.tsx.
+ *  - Step 4 (Opening Balances): trial-balance upload, reconciliation
+ *    proof, and Tier-2 auto-submit of the opening JE. See
+ *    OpeningBalancesStep.tsx.
  *  - Step 5 (Readiness): live checks. Calls /migration/{id}/readiness
  *    which evaluates the actual ERP state.
  */
@@ -365,31 +367,6 @@ function COAStep({ sessionId, onAccepted }: { sessionId: string; onAccepted: () 
   );
 }
 
-/* ---- Steps 3-4 placeholder ---- */
-
-function PlaceholderStep({
-  title, description, onSkip,
-}: {
-  title: string; description: string; onSkip: () => void;
-}) {
-  return (
-    <div>
-      <h1 className="text-heading-3 text-ink mb-1">{title}</h1>
-      <Card>
-        <div className="flex items-start gap-3">
-          <AlertCircle className="size-5 text-warning shrink-0 mt-0.5" />
-          <div>
-            <p className="text-body text-charcoal">{description}</p>
-            <p className="text-caption text-stone mt-2">Step ini akan ditambahkan setelah Phase D wizard shell di-review. Untuk sekarang, gunakan UI Settings yang ada untuk import data dan membuat opening-balance Journal Entry secara manual.</p>
-          </div>
-        </div>
-      </Card>
-      <div className="mt-4 flex items-center justify-end">
-        <Button variant="ghost" onClick={onSkip}>Skip for now <ChevronRight className="size-3.5" /></Button>
-      </div>
-    </div>
-  );
-}
 
 /* ---- Step 5: Readiness ---- */
 

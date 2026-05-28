@@ -164,6 +164,8 @@ export function CopilotPanel() {
   // the store so future opens don't re-send.
   const copilotSeedPrompt = useUI((s) => s.copilotSeedPrompt);
   const clearCopilotSeed = useUI((s) => s.clearCopilotSeed);
+  const copilotResumeSessionId = useUI((s) => s.copilotResumeSessionId);
+  const clearCopilotResume = useUI((s) => s.clearCopilotResume);
 
   // Pull contract suggested prompts via the ERP API (not the agent service)
   // so it works even before any contracts have been registered server-side.
@@ -306,6 +308,14 @@ export function CopilotPanel() {
     clearCopilotSeed();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, copilotSeedPrompt]);
+
+  // When the palette asks the panel to resume a specific session, load it.
+  useEffect(() => {
+    if (!open || !copilotResumeSessionId) return;
+    void loadSession(copilotResumeSessionId);
+    clearCopilotResume();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, copilotResumeSessionId]);
   useEffect(() => {
     if (!scrollRef.current) return;
     scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

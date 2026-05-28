@@ -66,7 +66,11 @@ interface UIState {
   copilotOpen: boolean;
   copilotMinimized: boolean;
   copilotSeedPrompt: string | null;
+  /** Set by external callers (⌘K palette) to resume a specific session on open. */
+  copilotResumeSessionId: string | null;
   openCopilotWith: (prompt: string) => void;
+  /** Open the panel and queue a session id to load. */
+  openCopilotSession: (sessionId: string) => void;
   /** Restore from minimized OR open from hidden. */
   openCopilot: () => void;
   /** Collapse to chip; preserves conversation state. */
@@ -75,6 +79,8 @@ interface UIState {
   closeCopilot: () => void;
   /** Called by the panel after it consumes the seed so we don't re-send. */
   clearCopilotSeed: () => void;
+  /** Called by the panel after it consumes a resume id. */
+  clearCopilotResume: () => void;
 
   sidebarCollapsed: boolean;
   toggleSidebar: () => void;
@@ -148,11 +154,14 @@ export const useUI = create<UIState>()((set, get) => ({
   copilotOpen: false,
   copilotMinimized: false,
   copilotSeedPrompt: null,
+  copilotResumeSessionId: null,
   openCopilotWith: (prompt) => set({ copilotOpen: true, copilotMinimized: false, copilotSeedPrompt: prompt }),
+  openCopilotSession: (sessionId) => set({ copilotOpen: true, copilotMinimized: false, copilotResumeSessionId: sessionId }),
   openCopilot: () => set({ copilotOpen: true, copilotMinimized: false }),
   minimizeCopilot: () => set({ copilotOpen: false, copilotMinimized: true }),
   closeCopilot: () => set({ copilotOpen: false, copilotMinimized: false }),
   clearCopilotSeed: () => set({ copilotSeedPrompt: null }),
+  clearCopilotResume: () => set({ copilotResumeSessionId: null }),
 
   sidebarCollapsed: false,
   toggleSidebar: () => set({ sidebarCollapsed: !get().sidebarCollapsed }),
