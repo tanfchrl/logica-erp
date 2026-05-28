@@ -46,20 +46,21 @@ type WarehouseCreateInput struct {
 	CustomFields  map[string]any `json:"custom_fields,omitempty"`
 }
 
-// WarehouseUpdateInput allows editing non-tree, non-natural-key fields of a
-// warehouse. The following are intentionally omitted and remain immutable
-// after creation:
+// WarehouseUpdateInput allows editing a warehouse's mutable fields including
+// tree position. `code` and `company_id` remain immutable (code is a stable
+// external lookup key; warehouses are company-scoped for life).
 //
-//   - code: stable lookup key referenced by external systems.
-//   - parent_id: the warehouse table uses nested-set columns (lft, rgt)
-//     and there is no rebuild helper in this codebase. Re-parenting would
-//     leave lft/rgt inconsistent, so it is disallowed until a tree-rebuild
-//     utility is added.
-//   - is_group: changing a leaf into a group (or vice-versa) interacts with
-//     the same lft/rgt structure and is treated as a structural change.
-//   - company_id: warehouses are scoped to a company for life.
+// Tree position: parent_id may be re-parented; the new parent must belong to
+// the same company, must be is_group=true, and must not be the warehouse
+// itself or any descendant (cycle guard). is_group can be toggled freely
+// except group→leaf is rejected when children exist.
+//
+// The lft/rgt columns on the schema are currently unused (no traversal logic
+// reads them), so parent_id changes do not require a nested-set rebuild.
 type WarehouseUpdateInput struct {
 	Name          string         `json:"name"`
+	ParentID      *string        `json:"parent_id,omitempty"`
+	IsGroup       *bool          `json:"is_group,omitempty"`
 	WarehouseType string         `json:"warehouse_type,omitempty"`
 	AccountID     string         `json:"account_id,omitempty"`
 	CustomFields  map[string]any `json:"custom_fields,omitempty"`
@@ -111,10 +112,8 @@ func (s *Service) Create(ctx context.Context, in WarehouseCreateInput) (*Warehou
 	return &w, err
 }
 
-// Update edits a warehouse's mutable fields. Tree position (parent_id,
-// is_group, lft, rgt) and the immutable code/company_id are not touched;
-// changing them safely requires a nested-set rebuild helper that this
-// codebase does not yet provide.
+// Update edits a warehouse's mutable fields. See WarehouseUpdateInput for
+// the tree-move guards.
 func (s *Service) Update(ctx context.Context, id string, in WarehouseUpdateInput) (*Warehouse, error) {
 	p := auth.FromContext(ctx)
 	if p == nil {
@@ -124,13 +123,93 @@ func (s *Service) Update(ctx context.Context, id string, in WarehouseUpdateInput
 	if in.Name == "" {
 		return nil, errors.New("warehouse.name: required")
 	}
-	if err := s.db.QueryRow(ctx, `SELECT 1 FROM warehouse WHERE id = $1 AND is_deleted = false`, id).Scan(new(int)); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, fmt.Errorf("warehouse %s not found", id)
-		}
-		return nil, err
-	}
+
 	err := s.db.Tx(ctx, func(tx pgx.Tx) error {
+		// Load current row (company, is_group, parent_id) under the tx so the
+		// tree-move guards see a consistent snapshot.
+		var (
+			companyID    string
+			curParent    *string
+			curIsGroup   bool
+		)
+		if err := tx.QueryRow(ctx, `
+			SELECT company_id, parent_id, is_group FROM warehouse
+			WHERE id = $1 AND is_deleted = false`, id).Scan(&companyID, &curParent, &curIsGroup); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("warehouse %s not found", id)
+			}
+			return err
+		}
+
+		newIsGroup := curIsGroup
+		if in.IsGroup != nil {
+			newIsGroup = *in.IsGroup
+		}
+
+		// Determine target parent. nil → keep; pointer to "" → detach (root).
+		newParent := curParent
+		if in.ParentID != nil {
+			if *in.ParentID == "" {
+				newParent = nil
+			} else {
+				np := *in.ParentID
+				newParent = &np
+			}
+		}
+
+		if newParent != nil {
+			if *newParent == id {
+				return errors.New("warehouse.parent_id: cannot parent to self")
+			}
+			var (
+				parentCompany string
+				parentIsGroup bool
+			)
+			if err := tx.QueryRow(ctx, `
+				SELECT company_id, is_group FROM warehouse
+				WHERE id = $1 AND is_deleted = false`, *newParent).Scan(&parentCompany, &parentIsGroup); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return fmt.Errorf("warehouse.parent_id: %s not found", *newParent)
+				}
+				return err
+			}
+			if parentCompany != companyID {
+				return errors.New("warehouse.parent_id: must be in same company")
+			}
+			if !parentIsGroup {
+				return errors.New("warehouse.parent_id: target must be a group")
+			}
+			// Cycle guard: walk ancestors of the target and ensure we don't
+			// hit `id`. Tree depth is small; recursive CTE is overkill.
+			cursor := *newParent
+			for hop := 0; hop < 64; hop++ {
+				if cursor == id {
+					return errors.New("warehouse.parent_id: move would create a cycle")
+				}
+				var next *string
+				if err := tx.QueryRow(ctx, `SELECT parent_id FROM warehouse WHERE id = $1`, cursor).Scan(&next); err != nil {
+					return err
+				}
+				if next == nil {
+					break
+				}
+				cursor = *next
+			}
+		}
+
+		// Group → leaf flip with existing children is rejected.
+		if curIsGroup && !newIsGroup {
+			var n int
+			if err := tx.QueryRow(ctx, `
+				SELECT count(*) FROM warehouse
+				WHERE parent_id = $1 AND is_deleted = false`, id).Scan(&n); err != nil {
+				return err
+			}
+			if n > 0 {
+				return fmt.Errorf("warehouse.is_group: cannot convert group to leaf while %d child warehouse(s) exist", n)
+			}
+		}
+
 		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
 		if err != nil {
 			return err
@@ -138,13 +217,16 @@ func (s *Service) Update(ctx context.Context, id string, in WarehouseUpdateInput
 		if _, err := tx.Exec(ctx, `
 			UPDATE warehouse SET
 			  name = $2,
-			  warehouse_type = $3,
-			  account_id = $4,
-			  custom_fields = $5,
-			  updated_by = $6,
+			  parent_id = $3,
+			  is_group = $4,
+			  warehouse_type = $5,
+			  account_id = $6,
+			  custom_fields = $7,
+			  updated_by = $8,
 			  updated_at = now()
 			WHERE id = $1 AND is_deleted = false`,
-			id, in.Name, nullable(in.WarehouseType), nullable(in.AccountID), cf, p.UserID); err != nil {
+			id, in.Name, newParent, newIsGroup,
+			nullable(in.WarehouseType), nullable(in.AccountID), cf, p.UserID); err != nil {
 			if dbx.IsUniqueViolation(err) {
 				return errors.New("warehouse: duplicate name in company")
 			}
