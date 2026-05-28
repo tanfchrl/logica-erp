@@ -18,6 +18,7 @@ import { PurchaseOrderForm } from './routes/PurchaseOrderForm';
 import { MaterialRequestForm } from './routes/MaterialRequestForm';
 import { OpportunityBoard } from './routes/OpportunityBoard';
 import { Companies } from './routes/Companies';
+import { PurchaseOrderBoard, MaterialRequestBoard } from './routes/PurchaseOrderBoard';
 import { Button } from './components/Button';
 import { Columns3 } from 'lucide-react';
 import { PurchaseReceiptForm } from './routes/PurchaseReceiptForm';
@@ -77,6 +78,8 @@ const poNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accoun
 const poEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/$id',   component: PurchaseOrderForm });
 const oppBoardRoute = createRoute({ getParentRoute: () => appRoute, path: '/crm/opportunities/board', component: OpportunityBoard });
 const companiesRoute = createRoute({ getParentRoute: () => appRoute, path: '/crm/companies',           component: Companies });
+const poBoardRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders/board',   component: PurchaseOrderBoard });
+const mrBoardRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/board', component: MaterialRequestBoard });
 const mrNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/new', component: MaterialRequestForm });
 const mrEditRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests/$id', component: MaterialRequestForm });
 const grnNewRoute  = createRoute({ getParentRoute: () => appRoute, path: '/stock/purchase-receipts/new', component: PurchaseReceiptForm });
@@ -114,8 +117,28 @@ const doctypeListRoutes = Object.values(doctypes)
 // SI + JE need their own list routes since we skipped them above.
 const siListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/sales-invoices',    component: () => <ListView config={doctypes.salesInvoices!} /> });
 const piListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-invoices', component: () => <ListView config={doctypes.purchaseInvoices!} /> });
-const poListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/purchase-orders',   component: () => <ListView config={doctypes.purchaseOrders!} /> });
-const mrListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/material-requests', component: () => <ListView config={doctypes.materialRequests!} /> });
+const poListRoute = createRoute({
+  getParentRoute: () => appRoute, path: '/accounting/purchase-orders',
+  component: () => (
+    <ListView config={doctypes.purchaseOrders!}
+      extraActions={
+        <Button variant="secondary" asChild>
+          <Link to={'/accounting/purchase-orders/board' as never}><Columns3 className="size-4" /> Board</Link>
+        </Button>
+      } />
+  ),
+});
+const mrListRoute = createRoute({
+  getParentRoute: () => appRoute, path: '/accounting/material-requests',
+  component: () => (
+    <ListView config={doctypes.materialRequests!}
+      extraActions={
+        <Button variant="secondary" asChild>
+          <Link to={'/accounting/material-requests/board' as never}><Columns3 className="size-4" /> Board</Link>
+        </Button>
+      } />
+  ),
+});
 const grnListRoute = createRoute({ getParentRoute: () => appRoute, path: '/stock/purchase-receipts',     component: () => <ListView config={doctypes.purchaseReceipts!} /> });
 const jeListRoute = createRoute({ getParentRoute: () => appRoute, path: '/accounting/journal-entries',   component: () => <ListView config={doctypes.journalEntries!} /> });
 const oppListRoute = createRoute({
@@ -201,6 +224,7 @@ const routeTree = rootRoute.addChildren([
     poNewRoute, poEditRoute, poListRoute,
     mrNewRoute, mrEditRoute, mrListRoute,
     oppBoardRoute, oppListRoute, companiesRoute,
+    poBoardRoute, mrBoardRoute,
     grnNewRoute, grnEditRoute, grnListRoute,
     jeNewRoute, jeEditRoute, jeListRoute,
     reportsIndex, reportsKind,
