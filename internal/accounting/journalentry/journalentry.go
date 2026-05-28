@@ -91,10 +91,16 @@ type Service struct {
 	Approvals approvalChecker
 	// Workflow is optional. Gates submit by role.
 	Workflow workflowGate
+	// Notifier is optional. Submit() fires journal_entry.submitted after commit.
+	Notifier notifier
 }
 
 type approvalChecker interface {
 	CheckSubmit(ctx context.Context, tx pgx.Tx, doctype, docID, docName, companyID string, fields map[string]any) error
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 type workflowGate interface {
@@ -290,6 +296,19 @@ func (s *Service) Submit(ctx context.Context, id string) (*JournalEntry, error) 
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		dr, _ := out.TotalDebit.Float64()
+		s.Notifier.Fire("journal_entry.submitted", map[string]any{
+			"company_id":    out.CompanyID,
+			"doctype":       Doctype,
+			"document_id":   out.ID,
+			"document_name": out.Name,
+			"total_debit":   dr,
+			"summary": fmt.Sprintf("Journal entry %s submitted, total %s %s",
+				out.Name, out.Currency, out.TotalDebit.String()),
+			"JournalEntry": out,
+		})
+	}
 	return &out, err
 }
 

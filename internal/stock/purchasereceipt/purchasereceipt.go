@@ -129,10 +129,15 @@ type Service struct {
 	db        *dbx.DB
 	po        *purchaseorder.Service
 	Workflow  workflowGate
+	Notifier  notifier
 }
 
 type workflowGate interface {
 	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 func NewService(db *dbx.DB, po *purchaseorder.Service) *Service {
@@ -481,6 +486,16 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseReceipt, erro
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		s.Notifier.Fire("pr.received", map[string]any{
+			"company_id":      out.CompanyID,
+			"doctype":         Doctype,
+			"document_id":     out.ID,
+			"document_name":   out.Name,
+			"summary":         fmt.Sprintf("Purchase receipt %s submitted", out.Name),
+			"PurchaseReceipt": out,
+		})
+	}
 	return &out, err
 }
 

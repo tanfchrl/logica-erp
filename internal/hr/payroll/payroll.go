@@ -104,6 +104,7 @@ type Service struct {
 	db        *dbx.DB
 	Approvals approvalChecker
 	Workflow  workflowGate
+	Notifier  notifier
 }
 
 type approvalChecker interface {
@@ -112,6 +113,10 @@ type approvalChecker interface {
 
 type workflowGate interface {
 	CheckSubmitRole(ctx context.Context, tx pgx.Tx, doctype string) error
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
@@ -463,6 +468,18 @@ func (s *Service) Submit(ctx context.Context, id string) (*PayrollEntry, error) 
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		net, _ := out.TotalNet.Float64()
+		s.Notifier.Fire("payroll.run", map[string]any{
+			"company_id":    out.CompanyID,
+			"doctype":       DoctypePayrollEntry,
+			"document_id":   out.ID,
+			"document_name": out.Name,
+			"total_net":     net,
+			"summary":       fmt.Sprintf("Payroll %s submitted, net %s", out.Name, out.TotalNet.String()),
+			"PayrollEntry":  out,
+		})
+	}
 	return &out, err
 }
 

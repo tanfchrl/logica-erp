@@ -355,6 +355,30 @@ func defaultMessage(eventKey string, p map[string]any) (subject, body string) {
 		subject = "Purchase order " + name + " sent to supplier"
 	case "so.submitted":
 		subject = "Sales order " + name + " submitted"
+	case "bill.received":
+		subject = "Purchase invoice " + name + " received"
+	case "journal_entry.submitted":
+		subject = "Journal entry " + name + " submitted"
+	case "mr.submitted":
+		subject = "Material request " + name + " submitted"
+	case "pr.received":
+		subject = "Purchase receipt " + name + " submitted"
+	case "stock_entry.submitted":
+		purpose := strOrEmpty(p["purpose"])
+		subject = "Stock entry " + name + " submitted"
+		if purpose != "" {
+			subject += " (" + purpose + ")"
+		}
+	case "bom.submitted":
+		subject = "BOM " + name + " submitted"
+	case "work_order.submitted":
+		subject = "Work order " + name + " submitted"
+	case "asset.acquired":
+		subject = "Asset " + name + " acquired"
+	case "payroll.run":
+		subject = "Payroll " + name + " submitted"
+	case "timesheet.submitted":
+		subject = "Timesheet " + name + " submitted"
 	case "approval.requested":
 		subject = "Approval needed: " + name
 	case "approval.decided":

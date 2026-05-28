@@ -235,6 +235,16 @@ func main() {
 	peSvc.Notifier = notifier
 	poSvc.Notifier = notifier
 	soSvc.Notifier = notifier
+	piSvc.Notifier = notifier
+	jeSvc.Notifier = notifier
+	mrSvc.Notifier = notifier
+	prSvc.Notifier = notifier
+	steSvc.Notifier = notifier
+	bomSvc.Notifier = notifier
+	woSvc.Notifier = notifier
+	assetSvc.Notifier = notifier
+	payrollSvc.Notifier = notifier
+	tsSvc.Notifier = notifier
 	soSvc.Approvals = approvalEng
 	soSvc.Workflow = workflowEng
 	tsSvc.Workflow = workflowEng

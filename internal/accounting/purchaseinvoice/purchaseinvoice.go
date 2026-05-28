@@ -170,6 +170,8 @@ type Service struct {
 	// Workflow is optional. Gates submit by role when a workflow definition
 	// exists for the doctype.
 	Workflow workflowGate
+	// Notifier is optional. Submit() fires bill.received after commit.
+	Notifier notifier
 	// BuyingSettings is optional. When set, CreateDraft + Submit consult
 	// per-company Buying Settings (over-billing tolerance, "PO required",
 	// etc). Nil is fine — treated as "no extra constraints".
@@ -177,6 +179,10 @@ type Service struct {
 	// AssetCreator is optional. When set, PI Submit auto-creates draft
 	// Asset records for every line whose item has is_fixed_asset=true.
 	AssetCreator AssetCreator
+}
+
+type notifier interface {
+	Fire(eventKey string, payload map[string]any)
 }
 
 // buyingSettingsProvider is the narrow contract Submit/Create needs from
@@ -904,6 +910,19 @@ func (s *Service) Cancel(ctx context.Context, id string) (*PurchaseInvoice, erro
 		out = *loaded
 		return nil
 	})
+	if err == nil && s.Notifier != nil {
+		grand, _ := out.GrandTotal.Float64()
+		s.Notifier.Fire("bill.received", map[string]any{
+			"company_id":    out.CompanyID,
+			"doctype":       Doctype,
+			"document_id":   out.ID,
+			"document_name": out.Name,
+			"grand_total":   grand,
+			"summary": fmt.Sprintf("Purchase invoice %s submitted, grand total %s %s",
+				out.Name, out.Currency, out.GrandTotal.String()),
+			"Invoice": out,
+		})
+	}
 	return &out, err
 }
 
