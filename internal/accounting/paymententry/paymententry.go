@@ -1,16 +1,31 @@
 // Package paymententry implements Payment Entry.
 //
+// Model:
+//   paid_amount     = cash actually moving (source side, in PaidFromCurrency)
+//   received_amount = cash actually moving (target side, in PaidToCurrency)
+//   total_deductions       = withholding/other deductions that *also* settle the AR/AP
+//   total_allocated_amount = sum of references' allocated_amount
+//   unallocated_amount     = paid_amount + total_deductions - total_allocated_amount  (>= 0; advances)
+//
+// Invariant: total_allocated + unallocated = paid + deductions
+//
+// This is ERPNext's model and the only one that composes with full-clearance + withholding:
+// invoice 5,550,000 cleared by cash 5,000,000 + PPh23 550,000 ⇒
+// paid_amount=5,000,000, total_deductions=550,000, total_allocated=5,550,000, unallocated=0.
+//
 // Submit (receive from customer):
-//   Dr paid_to_account (cash/bank)        base_received_amount  (= base_paid - base_deductions)
-//   Dr <deduction.account_id>             deduction.amount       (e.g. withholding receivable)
-//   Cr paid_from_account (receivable)     base_paid_amount       party=customer
+//   Dr paid_to_account (cash/bank)        base_paid_amount
+//   Dr <deduction.account_id>             deduction.amount       (e.g. PPh23 receivable)
+//   Cr paid_from_account (receivable)     base_paid + total_deductions   party=customer
 //
-// On submit, each referenced Sales Invoice's paid_amount + outstanding_amount
-// are updated atomically. On cancel, those updates are reversed and the GL
-// entries are inverted.
+// Submit (pay to supplier):
+//   Dr paid_to_account (payable)          base_paid + total_deductions   party=supplier
+//   Cr paid_from_account (cash/bank)      base_paid_amount
+//   Cr <deduction.account_id>             deduction.amount       (e.g. PPh23 payable to DJP)
 //
-// Phase 1A: supports payment_type 'receive' against sales_invoice only.
-// Phase 1B will add 'pay' against purchase_invoice and internal_transfer.
+// On submit, each referenced SI/PI's paid_amount + outstanding_amount are
+// updated atomically. On cancel, those updates are reversed and the GL is
+// inverted.
 package paymententry
 
 import (
@@ -311,12 +326,11 @@ func (s *Service) CreateDraft(ctx context.Context, in PaymentEntryCreateInput) (
 			totalDeductions = totalDeductions.Add(amt)
 		}
 
-		expected := totalAllocated.Add(totalDeductions)
-		if !expected.Equal(paidAmount) {
-			return fmt.Errorf("payment_entry: allocated %s + deductions %s != paid %s",
-				totalAllocated, totalDeductions, paidAmount)
+		unallocated, err := computeUnallocated(paidAmount, totalAllocated, totalDeductions)
+		if err != nil {
+			return err
 		}
-		receivedAmount := paidAmount.Sub(totalDeductions)
+		receivedAmount := paidAmount
 
 		fyID, err := pickFiscalYear(ctx, tx, in.CompanyID, pd)
 		if err != nil {
@@ -351,7 +365,7 @@ func (s *Service) CreateDraft(ctx context.Context, in PaymentEntryCreateInput) (
 			in.PaidFromAccountID, in.PaidToAccountID, fromCur, toCur,
 			paidAmount, receivedAmount, srcRate, tgtRate,
 			basePaid, baseReceived,
-			totalAllocated, totalAllocated.Mul(srcRate).Round(money.Precision), decimal.Zero, totalDeductions,
+			totalAllocated, totalAllocated.Mul(srcRate).Round(money.Precision), unallocated, totalDeductions,
 			nullable(in.ReferenceNo), nullableDate(in.ReferenceDate), nullable(in.Remarks),
 			cf, p.UserID); err != nil {
 			return err
@@ -562,12 +576,11 @@ func (s *Service) Update(ctx context.Context, id string, in PaymentEntryUpdateIn
 			totalDeductions = totalDeductions.Add(amt)
 		}
 
-		expected := totalAllocated.Add(totalDeductions)
-		if !expected.Equal(paidAmount) {
-			return fmt.Errorf("payment_entry: allocated %s + deductions %s != paid %s",
-				totalAllocated, totalDeductions, paidAmount)
+		unallocated, err := computeUnallocated(paidAmount, totalAllocated, totalDeductions)
+		if err != nil {
+			return err
 		}
-		receivedAmount := paidAmount.Sub(totalDeductions)
+		receivedAmount := paidAmount
 
 		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
 		if err != nil {
@@ -593,18 +606,19 @@ func (s *Service) Update(ctx context.Context, id string, in PaymentEntryUpdateIn
 			  base_received_amount        = $13,
 			  total_allocated_amount      = $14,
 			  base_total_allocated_amount = $15,
-			  total_deductions            = $16,
-			  reference_no                = $17,
-			  reference_date              = $18,
-			  remarks                     = $19,
-			  custom_fields               = $20,
-			  updated_by                  = $21
+			  unallocated_amount          = $16,
+			  total_deductions            = $17,
+			  reference_no                = $18,
+			  reference_date              = $19,
+			  remarks                     = $20,
+			  custom_fields               = $21,
+			  updated_by                  = $22
 			WHERE id = $1 AND docstatus = 0`,
 			id, nullable(partyType), nullable(partyID),
 			in.PaidFromAccountID, in.PaidToAccountID, fromCur, toCur,
 			paidAmount, receivedAmount, srcRate, tgtRate,
 			basePaid, baseReceived,
-			totalAllocated, totalAllocated.Mul(srcRate).Round(money.Precision), totalDeductions,
+			totalAllocated, totalAllocated.Mul(srcRate).Round(money.Precision), unallocated, totalDeductions,
 			nullable(in.ReferenceNo), nullableDate(in.ReferenceDate), nullable(in.Remarks),
 			cf, p.UserID); err != nil {
 			return err
@@ -694,16 +708,24 @@ func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) 
 
 		entries := []ledger.Entry{}
 
+		// Settlement amount on the party leg = total_allocated + unallocated,
+		// which by the invariant equals paid + deductions. Cross-currency with
+		// non-zero deductions is undefined for Phase 1 (deduction.amount is
+		// taken to be in base currency, so we add it directly to paid_amount
+		// for the account-currency view).
+		settleBase := pe.BasePaidAmount.Add(pe.TotalDeductions)
+		settleAcct := pe.PaidAmount.Add(pe.TotalDeductions)
+
 		switch pe.PaymentType {
 		case PaymentReceive:
-			// Dr Cash (received), Dr Deductions (withholding receivable), Cr AR (full paid)
+			// Dr Cash (paid_amount), Dr Deductions (PPh receivable), Cr AR (paid + deductions)
 			entries = append(entries, ledger.Entry{
-				AccountID:               pe.PaidToAccountID,
-				Debit:                   pe.BaseReceivedAmount,
-				AccountCurrency:         pe.PaidToCurrency,
-				DebitInAccountCurrency:  pe.ReceivedAmount,
-				Against:                 pe.PaidFromAccountID,
-				Remarks:                 pe.Name + " — payment received",
+				AccountID:              pe.PaidToAccountID,
+				Debit:                  pe.BaseReceivedAmount,
+				AccountCurrency:        pe.PaidToCurrency,
+				DebitInAccountCurrency: pe.ReceivedAmount,
+				Against:                pe.PaidFromAccountID,
+				Remarks:                pe.Name + " — payment received",
 			})
 			for _, d := range pe.Deductions {
 				var acctCurrency string
@@ -724,30 +746,30 @@ func (s *Service) Submit(ctx context.Context, id string) (*PaymentEntry, error) 
 				AccountID:               pe.PaidFromAccountID,
 				PartyType:               ledger.PartyType(pe.PartyType),
 				PartyID:                 pe.PartyID,
-				Credit:                  pe.BasePaidAmount,
+				Credit:                  settleBase,
 				AccountCurrency:         pe.PaidFromCurrency,
-				CreditInAccountCurrency: pe.PaidAmount,
+				CreditInAccountCurrency: settleAcct,
 				Against:                 pe.PaidToAccountID,
 				Remarks:                 pe.Name + " — settle receivable",
 			})
 
 		case PaymentPay:
-			// Dr AP (full paid), Cr Cash (received_amount), Cr Deductions (withholding payable)
+			// Dr AP (paid + deductions), Cr Cash (paid_amount), Cr Deductions (PPh payable to DJP)
 			entries = append(entries, ledger.Entry{
 				AccountID:              pe.PaidToAccountID,
 				PartyType:              ledger.PartyType(pe.PartyType),
 				PartyID:                pe.PartyID,
-				Debit:                  pe.BasePaidAmount,
+				Debit:                  settleBase,
 				AccountCurrency:        pe.PaidToCurrency,
-				DebitInAccountCurrency: pe.PaidAmount,
+				DebitInAccountCurrency: settleAcct,
 				Against:                pe.PaidFromAccountID,
 				Remarks:                pe.Name + " — settle payable",
 			})
 			entries = append(entries, ledger.Entry{
 				AccountID:               pe.PaidFromAccountID,
-				Credit:                  pe.BaseReceivedAmount,
+				Credit:                  pe.BasePaidAmount,
 				AccountCurrency:         pe.PaidFromCurrency,
-				CreditInAccountCurrency: pe.ReceivedAmount,
+				CreditInAccountCurrency: pe.PaidAmount,
 				Against:                 pe.PaidToAccountID,
 				Remarks:                 pe.Name + " — cash out",
 			})
@@ -1036,6 +1058,22 @@ func applyReferenceUpdates(ctx context.Context, tx pgx.Tx, refs []PaymentEntryRe
 		}
 	}
 	return nil
+}
+
+// computeUnallocated enforces the Payment Entry invariant:
+//
+//	total_allocated + unallocated = paid + deductions
+//
+// and returns the unallocated remainder (>= 0). Negative means the user
+// allocated more to invoices than cash + deductions can settle.
+func computeUnallocated(paid, allocated, deductions decimal.Decimal) (decimal.Decimal, error) {
+	diff := paid.Add(deductions).Sub(allocated)
+	if diff.IsNegative() {
+		return decimal.Zero, fmt.Errorf(
+			"payment_entry: over-allocated: allocated %s > paid %s + deductions %s",
+			allocated, paid, deductions)
+	}
+	return diff, nil
 }
 
 func nullable(s string) any {
