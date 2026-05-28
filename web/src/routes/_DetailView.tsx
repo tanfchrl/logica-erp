@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/EmptyState';
 import { Timeline } from '@/components/Timeline';
 import { ContactsPanel } from '@/components/ContactsPanel';
 import { NotesPanel } from '@/components/NotesPanel';
+import { TasksPanel } from '@/components/TasksPanel';
 import { api } from '@/lib/api';
 import { me } from '@/lib/auth';
 import { money, date } from '@/lib/format';
@@ -109,6 +110,9 @@ export function DetailView({ config, schema }: DetailViewProps) {
             {data && id && contactsAllowedFor(config.doctype) && (
               <ContactsPanel parentDoctype={config.doctype} parentID={id} />
             )}
+            {data && id && tasksAllowedFor(config.doctype) && (
+              <TasksPanel parentDoctype={config.doctype} parentID={id} />
+            )}
             {data && id && notesAllowedFor(config.doctype) && (
               <NotesPanel parentDoctype={config.doctype} parentID={id} />
             )}
@@ -137,9 +141,14 @@ const NOTES_ALLOWED    = new Set([
   'customer', 'supplier', 'lead', 'contact', 'opportunity',
   'asset', 'purchase_order', 'sales_invoice', 'purchase_invoice',
 ]);
+const TASKS_ALLOWED    = new Set([
+  'customer', 'supplier', 'lead', 'contact', 'opportunity',
+  'asset', 'purchase_order', 'sales_invoice', 'purchase_invoice',
+]);
 
 function contactsAllowedFor(doctype: string): boolean { return CONTACTS_ALLOWED.has(doctype); }
 function notesAllowedFor(doctype: string): boolean    { return NOTES_ALLOWED.has(doctype); }
+function tasksAllowedFor(doctype: string): boolean    { return TASKS_ALLOWED.has(doctype); }
 
 
 function FieldsCard({ fields, record }: { fields: FieldDef[]; record: Record<string, unknown> }) {

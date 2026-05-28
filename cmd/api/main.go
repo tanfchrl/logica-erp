@@ -55,6 +55,7 @@ import (
 	platformprint "github.com/tandigital/logica-erp/internal/platform/print"
 	"github.com/tandigital/logica-erp/internal/pos"
 	"github.com/tandigital/logica-erp/internal/projects/project"
+	"github.com/tandigital/logica-erp/internal/projects/task"
 	"github.com/tandigital/logica-erp/internal/stock/stockentry"
 	"github.com/tandigital/logica-erp/internal/stock/warehouse"
 	"github.com/tandigital/logica-erp/internal/support/issue"
@@ -124,6 +125,7 @@ func main() {
 	opportunitySvc := opportunity.NewService(db)
 	noteSvc := note.NewService(db)
 	projSvc := project.NewService(db)
+	taskSvc := task.NewService(db)
 	bomSvc := bom.NewService(db)
 	woSvc := workorder.NewService(db)
 	assetSvc := asset.NewService(db)
@@ -281,6 +283,7 @@ func main() {
 		opportunity.Register(hapi, &opportunity.Handler{Service: opportunitySvc, Perm: perm})
 		note.Register(hapi, &note.Handler{Service: noteSvc, Perm: perm})
 		project.Register(hapi, &project.Handler{Service: projSvc, Perm: perm})
+		task.Register(hapi, &task.Handler{Service: taskSvc, Perm: perm})
 		bom.Register(hapi, &bom.Handler{Service: bomSvc, Perm: perm})
 		workorder.Register(hapi, &workorder.Handler{Service: woSvc, Perm: perm})
 		asset.Register(hapi, &asset.Handler{Service: assetSvc, Perm: perm})
