@@ -7,6 +7,8 @@ import { Button } from '@/components/Button';
 import { StatusPill } from '@/components/StatusPill';
 import { Skeleton } from '@/components/EmptyState';
 import { Timeline } from '@/components/Timeline';
+import { ContactsPanel } from '@/components/ContactsPanel';
+import { NotesPanel } from '@/components/NotesPanel';
 import { api } from '@/lib/api';
 import { me } from '@/lib/auth';
 import { money, date } from '@/lib/format';
@@ -101,6 +103,15 @@ export function DetailView({ config, schema }: DetailViewProps) {
 
             {/* Child tables: render any array-of-objects field as a flat table. */}
             {data && renderChildTables(data)}
+
+            {/* CRM extras: Contacts + Notes panels where the backend
+                allowlists accept the parent doctype. */}
+            {data && id && contactsAllowedFor(config.doctype) && (
+              <ContactsPanel parentDoctype={config.doctype} parentID={id} />
+            )}
+            {data && id && notesAllowedFor(config.doctype) && (
+              <NotesPanel parentDoctype={config.doctype} parentID={id} />
+            )}
           </div>
 
           {/* Right rail: meta + raw payload viewer + activity timeline */}
@@ -117,6 +128,19 @@ export function DetailView({ config, schema }: DetailViewProps) {
 }
 
 /* ---------- helpers ---------- */
+
+// Mirrors the parentAllowlist on the backend (internal/crm/contact +
+// internal/crm/note). Kept here so the FE can avoid rendering empty
+// panels for doctypes the backend will reject.
+const CONTACTS_ALLOWED = new Set(['customer', 'supplier', 'lead']);
+const NOTES_ALLOWED    = new Set([
+  'customer', 'supplier', 'lead', 'contact', 'opportunity',
+  'asset', 'purchase_order', 'sales_invoice', 'purchase_invoice',
+]);
+
+function contactsAllowedFor(doctype: string): boolean { return CONTACTS_ALLOWED.has(doctype); }
+function notesAllowedFor(doctype: string): boolean    { return NOTES_ALLOWED.has(doctype); }
+
 
 function FieldsCard({ fields, record }: { fields: FieldDef[]; record: Record<string, unknown> }) {
   return (
