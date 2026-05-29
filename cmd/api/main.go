@@ -163,12 +163,13 @@ func main() {
 	}
 	agentLLMModel := os.Getenv("AGENT_LLM_MODEL")
 	if agentLLMModel == "" {
-		agentLLMModel = "gpt-4o-mini"
+		agentLLMModel = "claude-sonnet-4-6"
 	}
 	agentLLMSvc := agentllmconfig.NewService(db, agentLLMEnc, llm.Config{
-		BaseURL: os.Getenv("AGENT_LLM_BASE_URL"),
-		APIKey:  os.Getenv("AGENT_LLM_API_KEY"),
-		Model:   agentLLMModel,
+		Provider: llm.ProviderAnthropic,
+		BaseURL:  os.Getenv("AGENT_LLM_BASE_URL"),
+		APIKey:   os.Getenv("AGENT_LLM_API_KEY"),
+		Model:    agentLLMModel,
 	})
 	assetReportSvc := assetreports.NewService(db)
 	// PI's fixed-asset auto-create hook depends on assetSvc, declared

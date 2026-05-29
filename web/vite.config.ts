@@ -9,10 +9,14 @@ const apiTarget = process.env['VITE_API_TARGET'] ?? 'http://localhost:8080';
 
 // Agent service runs as a separate process on :8090. We proxy /api/agent
 // (the path the agent itself registers under) → 8090 so the browser sees
-// one origin. Default mirrors the apiTarget's host with port 8090 swapped
-// in, so the same container-vs-host autodetect works.
+// one origin. Resolution order: explicit VITE_AGENT_TARGET wins; otherwise in
+// the Docker dev stack the agent is its own container (logica-agent:8090, not
+// the API host), so swap host+port for that case; finally fall back to the
+// host-mode convention of mirroring the api host with just the port swapped.
 const agentTarget = process.env['VITE_AGENT_TARGET']
-  ?? apiTarget.replace(/:8080$/, ':8090');
+  ?? (apiTarget.includes('logica-api:8080')
+        ? apiTarget.replace('logica-api:8080', 'logica-agent:8090')
+        : apiTarget.replace(/:8080$/, ':8090'));
 
 export default defineConfig({
   plugins: [react()],

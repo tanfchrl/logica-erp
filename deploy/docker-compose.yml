@@ -81,13 +81,14 @@ services:
       JWT_SECRET: ${LOGICA_JWT_SECRET}
       ERP_API_BASE: http://api:8080/api/v1
       AGENT_PORT: "8090"
-      # BYOM — operator points these at any OpenAI-compatible endpoint
-      # (LiteLLM, Ollama, OpenRouter, Anthropic-via-OpenAI-shim, vLLM, etc.).
-      # Leaving AGENT_LLM_BASE_URL empty makes the agent return canned
-      # replies — useful for plumbing checks before a budget is wired up.
+      # The agent talks to Anthropic's native Messages API. These are an
+      # install-wide default; admins can override per company in Settings →
+      # AI Model. Leaving AGENT_LLM_API_KEY empty makes the agent return
+      # canned replies — useful for plumbing checks before a key is wired up.
+      # AGENT_LLM_BASE_URL is optional (defaults to https://api.anthropic.com).
       AGENT_LLM_BASE_URL: ${AGENT_LLM_BASE_URL:-}
       AGENT_LLM_API_KEY:  ${AGENT_LLM_API_KEY:-}
-      AGENT_LLM_MODEL:    ${AGENT_LLM_MODEL:-gpt-4o-mini}
+      AGENT_LLM_MODEL:    ${AGENT_LLM_MODEL:-claude-sonnet-4-6}
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8090/healthz"]
       interval: 10s

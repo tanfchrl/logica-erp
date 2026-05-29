@@ -35,6 +35,17 @@ import (
 
 const Doctype = "agent_llm_config"
 
+// defaultBaseURLFor returns the public endpoint for a provider so callers can
+// leave base_url blank in the common case. Today only Anthropic is wired.
+func defaultBaseURLFor(provider string) string {
+	switch provider {
+	case "anthropic", "":
+		return "https://api.anthropic.com"
+	default:
+		return ""
+	}
+}
+
 // LLMConfig is the read-side payload: same shape the FE renders. Note the
 // distinction from llm.Config — that's the agent client config; this is
 // the persistent DB row (no API key — only the last4 hint).
@@ -142,9 +153,10 @@ func (s *Service) buildForCompany(ctx context.Context, companyID string) *llm.Cl
 		}
 	}
 	return llm.New(llm.Config{
-		BaseURL: cfg.BaseURL,
-		APIKey:  apiKey,
-		Model:   cfg.Model,
+		Provider: llm.Provider(cfg.Provider),
+		BaseURL:  cfg.BaseURL,
+		APIKey:   apiKey,
+		Model:    cfg.Model,
 	})
 }
 
@@ -198,12 +210,17 @@ func (s *Service) Save(ctx context.Context, companyID string, in LLMConfigSaveIn
 	}
 	in.BaseURL = strings.TrimSpace(in.BaseURL)
 	in.Model = strings.TrimSpace(in.Model)
-	if in.BaseURL == "" || in.Model == "" {
-		return nil, errors.New("agent_llm_config: base_url and model are required")
+	if in.Model == "" {
+		return nil, errors.New("agent_llm_config: model is required")
 	}
 	provider := strings.TrimSpace(in.Provider)
 	if provider == "" {
-		provider = "openai"
+		provider = "anthropic"
+	}
+	// base_url is an optional advanced override; default to the provider's
+	// public endpoint so the UI doesn't have to send it.
+	if in.BaseURL == "" {
+		in.BaseURL = defaultBaseURLFor(provider)
 	}
 
 	id := dbx.NewIDWithPrefix("llmc")
@@ -289,22 +306,33 @@ func (s *Service) Save(ctx context.Context, companyID string, in LLMConfigSaveIn
 // request. Each input field is independently optional — missing ones fall
 // back to the stored row so the user can "Test" by editing only one field.
 func (s *Service) TestConnection(ctx context.Context, companyID string, in LLMConfigSaveInput) error {
-	baseURL, model, apiKey := in.BaseURL, in.Model, in.APIKey
+	baseURL, model, apiKey := strings.TrimSpace(in.BaseURL), strings.TrimSpace(in.Model), in.APIKey
+	provider := strings.TrimSpace(in.Provider)
 
-	if baseURL == "" || model == "" {
+	if baseURL == "" || model == "" || provider == "" {
 		stored, err := s.loadFromDB(ctx, companyID)
 		if err != nil {
 			return fmt.Errorf("test: %w", err)
 		}
-		if stored == nil {
-			return errors.New("test: base_url and model required (no stored config to fall back to)")
-		}
-		if baseURL == "" {
-			baseURL = stored.BaseURL
-		}
 		if model == "" {
+			if stored == nil {
+				return errors.New("test: model required (no stored config to fall back to)")
+			}
 			model = stored.Model
 		}
+		if baseURL == "" && stored != nil {
+			baseURL = stored.BaseURL
+		}
+		if provider == "" {
+			if stored != nil && stored.Provider != "" {
+				provider = stored.Provider
+			} else {
+				provider = "anthropic"
+			}
+		}
+	}
+	if baseURL == "" {
+		baseURL = defaultBaseURLFor(provider)
 	}
 	if apiKey == "" {
 		ct, nonce, err := s.fetchKeyCipher(ctx, companyID)
@@ -323,13 +351,13 @@ func (s *Service) TestConnection(ctx context.Context, companyID string, in LLMCo
 		}
 		apiKey = string(pt)
 	}
-	if baseURL == "" || model == "" {
-		return errors.New("test: base_url and model are required")
+	if model == "" {
+		return errors.New("test: model is required")
 	}
 
 	// Single-message ping. We only care that auth + URL work; quality of
 	// the reply is irrelevant.
-	client := llm.New(llm.Config{BaseURL: baseURL, APIKey: apiKey, Model: model})
+	client := llm.New(llm.Config{Provider: llm.Provider(provider), BaseURL: baseURL, APIKey: apiKey, Model: model})
 	_, err := client.Chat(ctx, llm.Request{
 		Messages: []llm.Message{{Role: "user", Content: "ping"}},
 	})

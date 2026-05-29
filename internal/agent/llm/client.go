@@ -1,72 +1,125 @@
-// Package llm is a thin OpenAI-compatible chat-completions client.
+// Package llm is the agent's chat client.
 //
-// BYOM (bring-your-own-model): the agent service is configured via two env
-// vars, AGENT_LLM_BASE_URL and AGENT_LLM_API_KEY. Anything that speaks the
-// OpenAI HTTP wire protocol — LiteLLM, Ollama (>= 0.5), OpenRouter, Together,
-// the Anthropic OpenAI-compat endpoint, or vLLM — drops in unchanged.
+// The public surface here is deliberately provider-neutral: Message, Tool,
+// ToolCall, Request, Response and StreamEvent describe a chat turn in terms
+// the ReAct loop and tool registry understand, with no vendor-specific
+// shapes leaking out. Each provider's HTTP wire format lives in its own file
+// (anthropic.go today) and is reached through the provider switch in Chat /
+// ChatStream. Adding a second provider is additive: a new constant, a new
+// file, two new switch cases — the orchestrator never changes.
 //
-// This client intentionally does NOT pull in github.com/sashabaranov/go-openai
-// or any vendor SDK. The chat-completions surface is small, stable, and we
-// want zero coupling to a single provider's release cycle.
+// Today exactly one provider is wired: Anthropic, talking to the native
+// Messages API (POST /v1/messages, x-api-key + anthropic-version headers).
+// This is NOT the OpenAI chat-completions protocol — Anthropic is not
+// OpenAI-compatible, and routing it through a proxy was the source of the
+// old breakage.
 package llm
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// Client is configured from env at boot and reused across requests.
+// Provider identifies the upstream API dialect. Provider-neutral types above;
+// provider-specific wire translation below.
+type Provider string
+
+const (
+	ProviderAnthropic Provider = "anthropic"
+)
+
+const (
+	defaultAnthropicBaseURL = "https://api.anthropic.com"
+	defaultAnthropicVersion = "2023-06-01"
+	defaultMaxTokens        = 4096
+)
+
+// Client is configured once (from env at boot, or per-company from the DB)
+// and reused across requests.
 type Client struct {
-	httpc    *http.Client
-	baseURL  string
-	apiKey   string
-	model    string
+	httpc            *http.Client
+	provider         Provider
+	baseURL          string
+	apiKey           string
+	model            string
+	maxTokens        int
+	anthropicVersion string
 }
 
-// Config matches the env vars consumed by cmd/agent.
+// Config is the resolved per-company (or env-fallback) model configuration.
 type Config struct {
-	BaseURL string // AGENT_LLM_BASE_URL — e.g. https://api.openai.com/v1
-	APIKey  string // AGENT_LLM_API_KEY  — bearer
-	Model   string // AGENT_LLM_MODEL    — model name accepted by the backend
+	Provider  Provider // defaults to anthropic when empty
+	BaseURL   string   // defaults to the provider's public endpoint when empty
+	APIKey    string
+	Model     string
+	MaxTokens int // defaults to 4096 when <= 0
+
+	// AnthropicVersion overrides the anthropic-version header. Empty = current
+	// pinned default. Exposed mainly so an operator can bump it without a
+	// redeploy if Anthropic ships a breaking version.
+	AnthropicVersion string
 }
 
 func New(cfg Config) *Client {
+	prov := cfg.Provider
+	if prov == "" {
+		prov = ProviderAnthropic
+	}
+	baseURL := strings.TrimRight(strings.TrimSpace(cfg.BaseURL), "/")
+	if baseURL == "" {
+		baseURL = defaultAnthropicBaseURL
+	}
+	maxTok := cfg.MaxTokens
+	if maxTok <= 0 {
+		maxTok = defaultMaxTokens
+	}
+	ver := strings.TrimSpace(cfg.AnthropicVersion)
+	if ver == "" {
+		ver = defaultAnthropicVersion
+	}
 	return &Client{
-		httpc:   &http.Client{Timeout: 120 * time.Second},
-		baseURL: cfg.BaseURL,
-		apiKey:  cfg.APIKey,
-		model:   cfg.Model,
+		httpc:            &http.Client{Timeout: 120 * time.Second},
+		provider:         prov,
+		baseURL:          baseURL,
+		apiKey:           cfg.APIKey,
+		model:            cfg.Model,
+		maxTokens:        maxTok,
+		anthropicVersion: ver,
 	}
 }
 
-// Model returns the model name we'll send to the backend. Surfaced in the
-// audit log so cost reporting can group by model.
+// Model returns the model name we'll send upstream. Surfaced in the audit log
+// so cost reporting can group by model.
 func (c *Client) Model() string { return c.model }
 
-// Configured reports whether the client has the minimum config to actually
-// dial an LLM. False means orchestration should fall back to canned replies
-// (useful for local dev without an API key).
-func (c *Client) Configured() bool { return c.baseURL != "" }
+// Configured reports whether the client has the minimum config to dial the
+// provider. False means orchestration falls back to a canned reply (useful
+// for local dev with no API key). For Anthropic the base URL always has a
+// default, so the deciding factor is the API key.
+func (c *Client) Configured() bool { return c.apiKey != "" }
 
-// Message is one chat-completions message.
+// Message is one chat turn in provider-neutral form.
+//
+//	role=system     Content is the system prompt (collapsed into the
+//	                provider's native system slot — never sent as a turn)
+//	role=user       Content is the user's text
+//	role=assistant  Content and/or ToolCalls (an assistant tool-use turn)
+//	role=tool       a tool result: ToolCallID links it to the assistant's
+//	                ToolCall.ID, Name is the tool name, Content is the result
 type Message struct {
-	Role       string     `json:"role"` // system | user | assistant | tool
+	Role       string     `json:"role"`
 	Content    string     `json:"content,omitempty"`
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"` // tool name when role=tool
+	Name       string     `json:"name,omitempty"`
 }
 
-// Tool is the JSON-schema descriptor sent to the model.
+// Tool is the JSON-schema descriptor advertised to the model.
 type Tool struct {
-	Type     string       `json:"type"` // always "function"
+	Type     string       `json:"type"` // always "function" in the neutral form
 	Function ToolFunction `json:"function"`
 }
 
@@ -76,17 +129,20 @@ type ToolFunction struct {
 	Parameters  map[string]any `json:"parameters"` // JSON Schema
 }
 
-// ToolCall is one assistant-emitted tool invocation.
+// ToolCall is one assistant-emitted tool invocation. Arguments is the
+// JSON-encoded argument object (provider-neutral: Anthropic's structured
+// `input` is marshalled into this string on the way out).
 type ToolCall struct {
 	ID       string `json:"id"`
 	Type     string `json:"type"` // always "function"
 	Function struct {
 		Name      string `json:"name"`
-		Arguments string `json:"arguments"` // JSON-encoded string
+		Arguments string `json:"arguments"`
 	} `json:"function"`
 }
 
-// Request is the chat-completions request body.
+// Request is a provider-neutral chat request. Model is optional; the client's
+// configured model is used when empty.
 type Request struct {
 	Model       string    `json:"model"`
 	Messages    []Message `json:"messages"`
@@ -95,14 +151,11 @@ type Request struct {
 	Stream      bool      `json:"stream,omitempty"`
 }
 
-// StreamEvent is one chunk yielded by Client.ChatStream. The Kind selects
-// which fields are populated:
+// StreamEvent is one chunk yielded by Client.ChatStream:
 //
 //	kind=delta       Content holds incremental assistant text
 //	kind=tool_calls  ToolCalls is the FINAL accumulated tool-call list
-//	                 (streaming tool_call deltas are accumulated inside
-//	                  the stream reader before we emit one event)
-//	kind=done        terminal event; nothing else after this
+//	kind=done        terminal; Content holds the full accumulated text
 //	kind=error       Err populated; terminal
 type StreamEvent struct {
 	Kind      string
@@ -111,8 +164,8 @@ type StreamEvent struct {
 	Err       error
 }
 
-// Response is the non-streaming chat-completions response body. Used for
-// tool-call detection; final assistant turns prefer ChatStream.
+// Response is a provider-neutral non-streaming response. Shaped like a single
+// choice so the ReAct loop reads choice.Message uniformly.
 type Response struct {
 	Choices []struct {
 		Message      Message `json:"message"`
@@ -126,41 +179,35 @@ type Response struct {
 	Model string `json:"model"`
 }
 
-// Chat sends a non-streaming chat completion. Errors surface the HTTP status
-// + body so the audit log captures upstream failures verbatim.
+// Chat sends a non-streaming request and returns the assistant turn (text
+// and/or tool calls). Errors surface the HTTP status + body so the audit log
+// captures upstream failures verbatim.
 func (c *Client) Chat(ctx context.Context, req Request) (*Response, error) {
 	if !c.Configured() {
-		return nil, fmt.Errorf("llm: AGENT_LLM_BASE_URL not set")
+		return nil, fmt.Errorf("llm: API key not set")
 	}
-	if req.Model == "" {
-		req.Model = c.model
+	switch c.provider {
+	case ProviderAnthropic:
+		return c.anthropicChat(ctx, req)
+	default:
+		return nil, fmt.Errorf("llm: unsupported provider %q", c.provider)
 	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
+}
+
+// ChatStream sends a streaming request. The returned channel yields
+// StreamEvents in order: zero or more deltas, optionally a tool_calls event,
+// then exactly one done or error event. Always drain the channel until
+// done|error so the response body is closed.
+func (c *Client) ChatStream(ctx context.Context, req Request) (<-chan StreamEvent, error) {
+	if !c.Configured() {
+		return nil, fmt.Errorf("llm: API key not set")
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
+	switch c.provider {
+	case ProviderAnthropic:
+		return c.anthropicChatStream(ctx, req)
+	default:
+		return nil, fmt.Errorf("llm: unsupported provider %q", c.provider)
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	resp, err := c.httpc.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	rawBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("llm: %s: %s", resp.Status, truncate(rawBody, 500))
-	}
-	var out Response
-	if err := json.Unmarshal(rawBody, &out); err != nil {
-		return nil, fmt.Errorf("llm: decode: %w: %s", err, truncate(rawBody, 200))
-	}
-	return &out, nil
 }
 
 func truncate(b []byte, n int) string {
@@ -168,160 +215,4 @@ func truncate(b []byte, n int) string {
 		return string(b)
 	}
 	return string(b[:n]) + "…"
-}
-
-// ChatStream sends a streaming chat-completions request. The returned
-// channel yields StreamEvents in order: zero or more deltas, optionally a
-// tool_calls event (when the model emits tool calls instead of content),
-// then exactly one done or error event. Always close the response body by
-// draining the channel until done|error.
-func (c *Client) ChatStream(ctx context.Context, req Request) (<-chan StreamEvent, error) {
-	if !c.Configured() {
-		return nil, fmt.Errorf("llm: AGENT_LLM_BASE_URL not set")
-	}
-	if req.Model == "" {
-		req.Model = c.model
-	}
-	req.Stream = true
-
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/chat/completions", bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "text/event-stream")
-	if c.apiKey != "" {
-		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
-	}
-	resp, err := c.httpc.Do(httpReq)
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		raw, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		return nil, fmt.Errorf("llm: %s: %s", resp.Status, truncate(raw, 500))
-	}
-
-	out := make(chan StreamEvent, 16)
-	go func() {
-		defer resp.Body.Close()
-		defer close(out)
-		parseSSE(resp.Body, out)
-	}()
-	return out, nil
-}
-
-// parseSSE walks the SSE stream from an OpenAI-compatible chat-completions
-// endpoint and pushes StreamEvents into out. The OpenAI wire format:
-//
-//	data: <json>\n\n
-//	data: <json>\n\n
-//	data: [DONE]\n\n
-//
-// Each JSON is a chat-completion chunk with a `choices[0].delta` carrying
-// incremental content and/or tool_calls. Tool-call deltas come as an array
-// of partial entries keyed by index — we accumulate them in a local map
-// and emit one consolidated tool_calls event when the stream ends without
-// content (the usual "tool-use" finish).
-func parseSSE(r io.Reader, out chan<- StreamEvent) {
-	sc := bufio.NewScanner(r)
-	// SSE lines can be large when a tool_call's arguments are big.
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-
-	type partialToolCall struct {
-		ID       string
-		Name     string
-		Args     string
-	}
-	tcAcc := map[int]*partialToolCall{}
-	var tcOrder []int
-	var fullContent string
-	finishReason := ""
-
-	for sc.Scan() {
-		line := sc.Text()
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if payload == "[DONE]" {
-			break
-		}
-
-		var chunk struct {
-			Choices []struct {
-				Delta struct {
-					Content   string `json:"content"`
-					ToolCalls []struct {
-						Index    int    `json:"index"`
-						ID       string `json:"id,omitempty"`
-						Type     string `json:"type,omitempty"`
-						Function struct {
-							Name      string `json:"name,omitempty"`
-							Arguments string `json:"arguments,omitempty"`
-						} `json:"function,omitempty"`
-					} `json:"tool_calls,omitempty"`
-				} `json:"delta"`
-				FinishReason string `json:"finish_reason,omitempty"`
-			} `json:"choices"`
-		}
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
-			// Don't fatal on a single malformed chunk — the OpenAI wire
-			// occasionally interleaves keep-alives or vendor extensions.
-			continue
-		}
-		if len(chunk.Choices) == 0 {
-			continue
-		}
-		choice := chunk.Choices[0]
-		if choice.FinishReason != "" {
-			finishReason = choice.FinishReason
-		}
-
-		if choice.Delta.Content != "" {
-			fullContent += choice.Delta.Content
-			out <- StreamEvent{Kind: "delta", Content: choice.Delta.Content}
-		}
-		for _, td := range choice.Delta.ToolCalls {
-			acc, ok := tcAcc[td.Index]
-			if !ok {
-				acc = &partialToolCall{}
-				tcAcc[td.Index] = acc
-				tcOrder = append(tcOrder, td.Index)
-			}
-			if td.ID != "" {
-				acc.ID = td.ID
-			}
-			if td.Function.Name != "" {
-				acc.Name = td.Function.Name
-			}
-			if td.Function.Arguments != "" {
-				acc.Args += td.Function.Arguments
-			}
-		}
-	}
-	if err := sc.Err(); err != nil {
-		out <- StreamEvent{Kind: "error", Err: err}
-		return
-	}
-
-	// Stream ended. If we accumulated tool calls, emit them as one event.
-	if len(tcOrder) > 0 {
-		tcs := make([]ToolCall, 0, len(tcOrder))
-		for _, idx := range tcOrder {
-			p := tcAcc[idx]
-			tc := ToolCall{ID: p.ID, Type: "function"}
-			tc.Function.Name = p.Name
-			tc.Function.Arguments = p.Args
-			tcs = append(tcs, tc)
-		}
-		out <- StreamEvent{Kind: "tool_calls", ToolCalls: tcs}
-	}
-	out <- StreamEvent{Kind: "done", Content: fullContent}
-	_ = finishReason // reserved for usage stats / future telemetry
 }

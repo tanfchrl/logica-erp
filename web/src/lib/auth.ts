@@ -1,4 +1,4 @@
-import { api, setAccessToken, setActiveCompany, getAccessToken } from './api';
+import { api, setAccessToken, setActiveCompany, getAccessToken, setUnauthorizedHandler } from './api';
 
 export interface MeResponse {
   id: string;
@@ -60,3 +60,9 @@ function scheduleRefresh(seconds: number) {
   const ms = Math.max(seconds - 60, 30) * 1000;
   refreshTimer = setTimeout(() => { void refresh(); }, ms);
 }
+
+// Reactive 401 recovery: when any API call gets a 401 (e.g. the proactive
+// refresh timer was throttled while the tab slept and the access token
+// expired), try a single token refresh so the caller can retry. Deduping of
+// concurrent 401s lives in api.ts. Returns true when the token was renewed.
+setUnauthorizedHandler(async () => (await refresh()) !== null);

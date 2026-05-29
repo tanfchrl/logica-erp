@@ -29,18 +29,17 @@ type PricingEntry struct {
 // models a Logica deployment is likely to route through. Operators bring
 // new entries (or fix outdated rates) via env override.
 var defaultPricing = []PricingEntry{
-	// Anthropic — Sept 2025 pricing.
-	{"claude-sonnet-4-5", 3.00, 15.00},
-	{"claude-sonnet-4-5-20250929", 3.00, 15.00},
+	// Anthropic — current Claude 4.x family (per-million-token USD). Adjust
+	// via AGENT_PRICING_OVERRIDES_JSON if Anthropic changes rates.
+	{"claude-opus-4-8", 15.00, 75.00},
+	{"claude-sonnet-4-6", 3.00, 15.00},
 	{"claude-haiku-4-5", 1.00, 5.00},
 	{"claude-haiku-4-5-20251001", 1.00, 5.00},
+	// Prior Claude generations kept so historical usage rows still price.
+	{"claude-sonnet-4-5", 3.00, 15.00},
+	{"claude-sonnet-4-5-20250929", 3.00, 15.00},
 	{"claude-opus-4-1", 15.00, 75.00},
 	{"claude-opus-4-1-20250805", 15.00, 75.00},
-
-	// OpenAI — Sept 2025 pricing.
-	{"gpt-4o", 2.50, 10.00},
-	{"gpt-4o-mini", 0.15, 0.60},
-	{"gpt-4.1", 2.00, 8.00},
 
 	// Self-hosted / local — zero per-token cost.
 	{"ollama-qwen", 0, 0},

@@ -112,7 +112,7 @@ func chatStreamHandler(
 		})
 
 		if !ll.Configured() {
-			reply := fmt.Sprintf("Agent service is up. No LLM configured — set AGENT_LLM_BASE_URL/_API_KEY/_MODEL. Loaded %s.",
+			reply := fmt.Sprintf("Agent service is up. No model configured — add an Anthropic API key in Settings → AI Model (or set AGENT_LLM_API_KEY). Loaded %s.",
 				registry.Summary())
 			emit("delta", map[string]string{"content": reply})
 			turn++

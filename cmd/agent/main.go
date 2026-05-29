@@ -53,9 +53,9 @@ func main() {
 	jwtSecret := mustEnv("JWT_SECRET")
 	erpBase := envDefault("ERP_API_BASE", "http://localhost:8080/api/v1")
 	port := envDefault("AGENT_PORT", "8090")
-	llmBase := os.Getenv("AGENT_LLM_BASE_URL")
+	llmBase := os.Getenv("AGENT_LLM_BASE_URL") // optional; defaults to https://api.anthropic.com
 	llmKey := os.Getenv("AGENT_LLM_API_KEY")
-	llmModel := envDefault("AGENT_LLM_MODEL", "gpt-4o-mini")
+	llmModel := envDefault("AGENT_LLM_MODEL", "claude-sonnet-4-6")
 	contractsDir := envDefault("AGENT_CONTRACTS_DIR", "/src")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -86,7 +86,7 @@ func main() {
 	auditQuery := audit.NewQuery(db)
 	costSvc := audit.NewCostService(db)
 	sessStore := session.New(db)
-	envLLM := llm.Config{BaseURL: llmBase, APIKey: llmKey, Model: llmModel}
+	envLLM := llm.Config{Provider: llm.ProviderAnthropic, BaseURL: llmBase, APIKey: llmKey, Model: llmModel}
 	llmClient := llm.New(envLLM)
 	// BYOM provider — per-company config from agent_llm_config, with the
 	// env-built client as fallback. Encrypter is optional: if the key env
@@ -295,7 +295,7 @@ func registerChat(api huma.API, store *session.Store, rec *audit.Recorder, provi
 		// No LLM? Return the canned reply so the FE can still render.
 		if !ll.Configured() {
 			reply := fmt.Sprintf(
-				"Agent service is up. No LLM is configured — set AGENT_LLM_BASE_URL/AGENT_LLM_API_KEY/AGENT_LLM_MODEL to enable conversation. Loaded %s.",
+				"Agent service is up. No model is configured — add an Anthropic API key in Settings → AI Model (or set AGENT_LLM_API_KEY) to enable conversation. Loaded %s.",
 				registry.Summary(),
 			)
 			turn++

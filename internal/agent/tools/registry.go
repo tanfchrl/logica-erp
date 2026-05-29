@@ -81,8 +81,9 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 	return t, ok
 }
 
-// LLMTools returns the OpenAI-compatible function descriptors. This is what
-// the orchestrator hands to llm.Client.Chat() as `tools`.
+// LLMTools returns the provider-neutral tool descriptors. This is what the
+// orchestrator hands to llm.Client.Chat() as `tools`; the llm client
+// translates them into the active provider's tool schema (Anthropic today).
 func (r *Registry) LLMTools() []llm.Tool {
 	out := make([]llm.Tool, 0, len(r.tools))
 	for _, t := range r.tools {
