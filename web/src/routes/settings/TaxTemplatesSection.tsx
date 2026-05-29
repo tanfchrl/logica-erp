@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Plus, FileText, Trash2, Star, AlertCircle, Percent, Tag } from 'lucide-react';
+import { Plus, FileText, Trash2, Star, Pencil, Percent, Tag } from 'lucide-react';
 import { Card, CardDescription, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field, Input } from '@/components/Input';
@@ -116,6 +116,7 @@ function TemplatesTab() {
   });
   const [expanded, setExpanded] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [editing, setEditing] = useState<TaxTemplate | null>(null);
 
   const items = data?.items ?? [];
   const salesCount    = items.filter((t) => t.is_sales).length;
@@ -166,15 +167,24 @@ function TemplatesTab() {
               template={t}
               expanded={expanded === t.id}
               onToggle={() => setExpanded(expanded === t.id ? null : t.id)}
+              onEdit={() => setEditing(t)}
             />
           ))}
         </div>
       )}
 
       {createOpen && (
-        <CreateTemplateDialog
+        <TemplateDialog
           onClose={() => setCreateOpen(false)}
-          onCreated={() => { void qc.invalidateQueries({ queryKey: ['tax-templates'] }); setCreateOpen(false); }}
+          onSaved={() => { void qc.invalidateQueries({ queryKey: ['tax-templates'] }); setCreateOpen(false); }}
+        />
+      )}
+
+      {editing && (
+        <TemplateDialog
+          template={editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { void qc.invalidateQueries({ queryKey: ['tax-templates'] }); setEditing(null); }}
         />
       )}
     </div>
@@ -182,8 +192,8 @@ function TemplatesTab() {
 }
 
 function TemplateRow({
-  template, expanded, onToggle,
-}: { template: TaxTemplate; expanded: boolean; onToggle: () => void }) {
+  template, expanded, onToggle, onEdit,
+}: { template: TaxTemplate; expanded: boolean; onToggle: () => void; onEdit: () => void }) {
   const lines = template.lines ?? [];
   const total = lines.reduce((sum, l) => sum + Number(l.rate || 0), 0);
   return (
@@ -240,9 +250,10 @@ function TemplateRow({
               </tbody>
             </table>
           )}
-          <div className="mt-3 pt-3 border-t border-hairline flex items-start gap-2 text-caption text-stone">
-            <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-            <span>Editing existing templates needs <span className="font-mono">PUT /accounting/tax-templates/{'{id}'}</span> — not yet on the API.</span>
+          <div className="mt-3 pt-3 border-t border-hairline flex justify-end">
+            <Button type="button" variant="ghost" size="sm" onClick={onEdit}>
+              <Pencil className="size-3.5" /> Edit template
+            </Button>
           </div>
         </div>
       )}
@@ -260,9 +271,10 @@ interface DraftLine {
   included_in_basic_rate: boolean;
 }
 
-function CreateTemplateDialog({
-  onClose, onCreated,
-}: { onClose: () => void; onCreated: () => void }) {
+function TemplateDialog({
+  template, onClose, onSaved,
+}: { template?: TaxTemplate; onClose: () => void; onSaved: () => void }) {
+  const isEdit = !!template;
   const { data: acc } = useQuery({
     queryKey: ['accounts'],
     queryFn: () => api<AccountList>('/accounting/accounts'),
@@ -284,14 +296,24 @@ function CreateTemplateDialog({
     [cats],
   );
 
-  const [name, setName]       = useState('PPN 11% — Output');
-  const [isSales, setIsSales] = useState(true);
-  const [isDefault, setIsDefault] = useState(false);
-  const [categoryId, setCategoryId] = useState('');
-  const [lines, setLines] = useState<DraftLine[]>([{
-    description: 'PPN 11%', rate: '11', account_id: '',
-    charge_type: 'On Net Total', included_in_basic_rate: false,
-  }]);
+  const [name, setName]       = useState(template?.name ?? 'PPN 11% — Output');
+  const [isSales, setIsSales] = useState(template?.is_sales ?? true);
+  const [isDefault, setIsDefault] = useState(template?.is_default ?? false);
+  const [categoryId, setCategoryId] = useState(template?.tax_category_id ?? '');
+  const [lines, setLines] = useState<DraftLine[]>(
+    template
+      ? (template.lines ?? []).map((l) => ({
+          description: l.description,
+          rate: l.rate,
+          account_id: l.account_id,
+          charge_type: l.charge_type,
+          included_in_basic_rate: l.included_in_basic_rate,
+        }))
+      : [{
+          description: 'PPN 11%', rate: '11', account_id: '',
+          charge_type: 'On Net Total', included_in_basic_rate: false,
+        }],
+  );
   const [error, setError] = useState<string | null>(null);
 
   const mut = useMutation({
@@ -309,9 +331,11 @@ function CreateTemplateDialog({
           included_in_basic_rate: l.included_in_basic_rate,
         })),
       };
-      return api<TaxTemplate>('/accounting/tax-templates', { method: 'POST', body: payload });
+      return isEdit
+        ? api<TaxTemplate>(`/accounting/tax-templates/${template!.id}`, { method: 'PUT', body: payload })
+        : api<TaxTemplate>('/accounting/tax-templates', { method: 'POST', body: payload });
     },
-    onSuccess: () => onCreated(),
+    onSuccess: () => onSaved(),
     onError: (e: Error) => setError(e.message),
   });
 
@@ -344,9 +368,10 @@ function CreateTemplateDialog({
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl">
-        <DialogTitle>New tax template</DialogTitle>
+        <DialogTitle>{isEdit ? 'Edit tax template' : 'New tax template'}</DialogTitle>
         <DialogDescription>
           Group one or more tax lines under a reusable name. Mark default to auto-fill on new documents.
+          {isEdit && ' Saving replaces all existing lines on this template.'}
         </DialogDescription>
 
         <form onSubmit={submit} className="mt-4 space-y-4">
@@ -435,7 +460,7 @@ function CreateTemplateDialog({
 
           <div className="flex justify-end gap-2 pt-2 border-t border-hairline">
             <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
-            <Button type="submit" loading={mut.isPending}>Create template</Button>
+            <Button type="submit" loading={mut.isPending}>{isEdit ? 'Save changes' : 'Create template'}</Button>
           </div>
         </form>
       </DialogContent>
