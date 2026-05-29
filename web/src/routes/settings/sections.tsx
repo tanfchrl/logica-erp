@@ -15,6 +15,7 @@ import { AgentAuditLogSection }  from './AgentAuditLogSection';
 import { AgentUsageSection }     from './AgentUsageSection';
 import { AIPolicyLimitsSection } from './AIPolicyLimitsSection';
 import { AIModelSection }        from './AIModelSection';
+import { ImplementationWizardSection } from './ImplementationWizardSection';
 import { BuyingSettingsSection }  from './BuyingSettingsSection';
 import { AssetSettingsSection }   from './AssetSettingsSection';
 import { CustomFieldsSection }    from './CustomFieldsSection';
@@ -183,6 +184,9 @@ export const SECTIONS: SectionDef[] = [
   { key: 'ai-policy-limits', group: 'system', label: 'AI policy limits', icon: ShieldCheck,
     description: 'Per-doctype IDR caps the agent must stay under on Tier-1 drafts.',
     component: AIPolicyLimitsSection, requireSystem: true },
+  { key: 'implementation-wizard', group: 'system', label: 'Implementation Wizard', icon: Wand2,
+    description: 'Guided go-live setup — re-run or onboard another company anytime.',
+    component: ImplementationWizardSection, requireSystem: true },
 ];
 
 /** Sidebar grouping order + labels. */

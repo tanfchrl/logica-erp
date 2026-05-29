@@ -1,10 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
-import { Check, ChevronRight, Sparkles, AlertCircle, ArrowRight } from 'lucide-react';
+import { Check, ChevronRight, Sparkles, AlertCircle, ArrowRight, Send } from 'lucide-react';
 import { Card, CardDescription, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
-import { Field, Input } from '@/components/Input';
 import { cn } from '@/lib/cn';
 import { getAccessToken, getActiveCompany } from '@/lib/api';
 import { DataMigrationStep } from './migration/DataMigrationStep';
@@ -16,12 +15,14 @@ import { OpeningBalancesStep } from './migration/OpeningBalancesStep';
  * structured proposal cards. Resumable: a setup session persists in
  * agent_session so users can come back to it.
  *
- * Phase-D MVP scope:
- *  - Step 1 (Discovery): structured form, not free-form chat. The spec
- *    favours conversation, but a form lets us ship the round-trip cheaply.
- *    Future iteration can swap in a Copilot-style chat-driven intake.
- *  - Step 2 (COA): proposal table + accept. Account creation happens via
- *    the standard /accounting/accounts endpoint (operator-triggered).
+ * Scope:
+ *  - Step 1 (Discovery): conversational intake (Claude via the agent). The
+ *    model interviews the user and records the SetupProfile through a tool
+ *    call; a live profile card shows what's been gathered. Backed by
+ *    POST /migration/{id}/discovery/chat.
+ *  - Step 2 (COA): proposal table + accept. The proposal is the PSAK base +
+ *    industry overlay, plus best-effort LLM-suggested extra accounts. Account
+ *    creation happens via the standard /accounting/accounts endpoint.
  *  - Step 3 (Data Migration): upload → map → commit, driven by
  *    /admin/imports/*. See DataMigrationStep.tsx.
  *  - Step 4 (Opening Balances): trial-balance upload, reconciliation
@@ -208,7 +209,13 @@ export function MigrationWizard() {
   );
 }
 
-/* ---- Step 1: Discovery ---- */
+/* ---- Step 1: Discovery (conversational) ---- */
+
+interface ChatMsg { role: 'user' | 'assistant'; content: string }
+interface DiscoveryResult { reply: string; profile?: SetupProfile; complete: boolean }
+
+const DISCOVERY_GREETING =
+  'Halo! Saya akan membantu menyiapkan Logica ERP untuk bisnis Anda. Untuk mulai — bisnis Anda bergerak di bidang apa, dan kira-kira masuk industri mana (dagang, manufaktur, jasa, atau konstruksi)?';
 
 function DiscoveryStep({
   initial, sessionId, onDone,
@@ -217,85 +224,131 @@ function DiscoveryStep({
   sessionId: string;
   onDone: () => void;
 }) {
-  const [profile, setProfile] = useState<SetupProfile>(initial ?? {
-    business_type: '', industry: '', employees: 0, modules: [],
-    multicompany: false, fiscal_year_start: '01-01', base_currency: 'IDR',
-    legacy_system: '',
-  });
-  const save = useMutation({
-    mutationFn: (p: SetupProfile) =>
-      agentFetch(`/api/agent/v1/migration/${sessionId}/profile`, { method: 'POST', body: p }),
-    onSuccess: () => onDone(),
+  const [messages, setMessages] = useState<ChatMsg[]>([{ role: 'assistant', content: DISCOVERY_GREETING }]);
+  const [draft, setDraft] = useState('');
+  const [profile, setProfile] = useState<SetupProfile | undefined>(initial);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  const send = useMutation({
+    mutationFn: (message: string) =>
+      agentFetch<DiscoveryResult>(`/api/agent/v1/migration/${sessionId}/discovery/chat`, {
+        method: 'POST', body: { message },
+      }),
+    onSuccess: (r) => {
+      setMessages((m) => [...m, { role: 'assistant', content: r.reply }]);
+      if (r.profile) setProfile(r.profile);
+      if (r.complete) setTimeout(onDone, 900);
+    },
   });
 
-  function setField<K extends keyof SetupProfile>(key: K, value: SetupProfile[K]) {
-    setProfile((p) => ({ ...p, [key]: value }));
+  function submit() {
+    const msg = draft.trim();
+    if (!msg || send.isPending) return;
+    setMessages((m) => [...m, { role: 'user', content: msg }]);
+    setDraft('');
+    send.mutate(msg);
   }
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages, send.isPending]);
+
+  const err = send.error as Error | null;
+  const noModel = err?.message?.toLowerCase().includes('no ai model') || err?.message?.toLowerCase().includes('model configured');
 
   return (
     <div>
       <h1 className="text-heading-3 text-ink mb-1">Step 1 · Discovery Interview</h1>
       <p className="text-body text-stone mb-6">
-        Beberapa pertanyaan tentang perusahaan dan operasinya. Jawaban ini mendorong setiap rekomendasi berikutnya — chart of accounts, modul yang diaktifkan, dan readiness check.
+        Ngobrol sebentar tentang bisnis Anda. Jawaban Anda mendorong rekomendasi berikutnya — chart of accounts, modul, dan readiness check. Asisten akan mengisi profil di kanan otomatis.
       </p>
-      <Card>
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Business type" hint="e.g. Trading, Manufacturing, Service">
-            <Input value={profile.business_type} onChange={(e) => setField('business_type', e.target.value)} />
-          </Field>
-          <Field label="Industry" hint="Drives the industry-specific chart-of-accounts overlay (WIP for manufacturing, retention for construction, etc.)">
-            <select
-              value={profile.industry}
-              onChange={(e) => setField('industry', e.target.value)}
-              className="w-full h-9 px-3 rounded-md border border-hairline bg-surface text-body-sm focus:outline-none focus:ring-2 focus:ring-accent">
-              <option value="">Pilih industri…</option>
-              <option value="trading">Trading / Retail (Perdagangan)</option>
-              <option value="manufacturing">Manufacturing (Manufaktur)</option>
-              <option value="services">Services (Jasa)</option>
-              <option value="construction">Construction (Konstruksi)</option>
-              <option value="other">Other / Belum yakin</option>
-            </select>
-          </Field>
-          <Field label="Number of employees">
-            <Input
-              type="number"
-              value={profile.employees || ''}
-              onChange={(e) => setField('employees', parseInt(e.target.value, 10) || 0)}
-            />
-          </Field>
-          <Field label="Legacy system" hint="What are you migrating from?">
-            <Input value={profile.legacy_system} onChange={(e) => setField('legacy_system', e.target.value)} />
-          </Field>
-          <Field label="Base currency">
-            <Input value={profile.base_currency} onChange={(e) => setField('base_currency', e.target.value)} />
-          </Field>
-          <Field label="Fiscal year start (MM-DD)">
-            <Input value={profile.fiscal_year_start} onChange={(e) => setField('fiscal_year_start', e.target.value)} />
-          </Field>
-          <div className="sm:col-span-2">
-            <Field label="Multi-company">
-              <label className="inline-flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={profile.multicompany}
-                  onChange={(e) => setField('multicompany', e.target.checked)}
-                  className="size-4 rounded border-border accent-accent"
-                />
-                <span className="text-body text-text-secondary">{profile.multicompany ? 'Yes' : 'No'}</span>
-              </label>
-            </Field>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1fr,260px] gap-4 items-start">
+        <Card padded={false} className="flex flex-col h-[460px]">
+          <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+            {messages.map((m, i) => (
+              <div key={i} className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}>
+                <div className={cn(
+                  'max-w-[85%] rounded-lg px-3 py-2 text-body-sm whitespace-pre-wrap',
+                  m.role === 'user'
+                    ? 'bg-accent text-white'
+                    : 'bg-surface-soft text-charcoal border border-hairline',
+                )}>
+                  {m.content}
+                </div>
+              </div>
+            ))}
+            {send.isPending && (
+              <div className="flex justify-start">
+                <div className="rounded-lg px-3 py-2 bg-surface-soft border border-hairline text-stone text-body-sm">
+                  <span className="inline-flex gap-1">
+                    <span className="size-1.5 rounded-full bg-stone animate-pulse" />
+                    <span className="size-1.5 rounded-full bg-stone animate-pulse [animation-delay:150ms]" />
+                    <span className="size-1.5 rounded-full bg-stone animate-pulse [animation-delay:300ms]" />
+                  </span>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      </Card>
-      <div className="mt-4 flex items-center justify-end">
-        <Button onClick={() => save.mutate(profile)} loading={save.isPending}>
-          Save &amp; continue <ChevronRight className="size-3.5" />
-        </Button>
+          <div className="border-t border-hairline p-3 flex items-end gap-2">
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } }}
+              rows={1}
+              placeholder="Tulis jawaban Anda…"
+              className="flex-1 resize-none px-3 py-2 rounded-md border border-hairline bg-surface text-body-sm focus:outline-none focus:ring-2 focus:ring-accent max-h-32"
+            />
+            <Button onClick={submit} loading={send.isPending} disabled={!draft.trim()}>
+              <Send className="size-4" />
+            </Button>
+          </div>
+        </Card>
+
+        <ProfileCard profile={profile} />
       </div>
-      {save.error && (
-        <div className="mt-2 text-caption text-brand-error">{(save.error as Error).message}</div>
+
+      {err && (
+        <div className="mt-3">
+          {noModel ? (
+            <Card className="border-l-4 border-l-warning">
+              <div className="text-body-sm text-charcoal">
+                Belum ada model AI yang dikonfigurasi. Buka <a href="/settings/ai-model" className="text-accent underline">Settings → AI Model</a>, simpan Anthropic API key, lalu kembali ke sini.
+              </div>
+            </Card>
+          ) : (
+            <div className="text-caption text-brand-error">{err.message}</div>
+          )}
+        </div>
       )}
     </div>
+  );
+}
+
+function ProfileCard({ profile }: { profile: SetupProfile | undefined }) {
+  const rows: Array<[string, string]> = [
+    ['Tipe bisnis', profile?.business_type || ''],
+    ['Industri', profile?.industry || ''],
+    ['Karyawan', profile?.employees ? String(profile.employees) : ''],
+    ['Modul', profile?.modules?.length ? profile.modules.join(', ') : ''],
+    ['Multi-company', profile ? (profile.multicompany ? 'Ya' : 'Tidak') : ''],
+    ['Awal tahun fiskal', profile?.fiscal_year_start || ''],
+    ['Mata uang', profile?.base_currency || ''],
+    ['Sistem lama', profile?.legacy_system || ''],
+  ];
+  return (
+    <Card className="lg:sticky lg:top-6">
+      <CardTitle>Profil terkumpul</CardTitle>
+      <CardDescription>Diisi otomatis selama percakapan.</CardDescription>
+      <dl className="mt-3 space-y-2">
+        {rows.map(([k, v]) => (
+          <div key={k} className="flex flex-col">
+            <dt className="text-caption text-stone">{k}</dt>
+            <dd className={cn('text-body-sm', v ? 'text-ink' : 'text-stone/50 italic')}>{v || 'belum diisi'}</dd>
+          </div>
+        ))}
+      </dl>
+    </Card>
   );
 }
 

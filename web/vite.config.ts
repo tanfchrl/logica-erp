@@ -26,7 +26,12 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    // 5173 is the default Vite port and tends to clash with other local apps;
+    // Logica's dev server runs on 5176. strictPort makes a clash fail loudly
+    // rather than silently hopping to another port (which would break the
+    // host→container mapping + HMR).
+    port: 5176,
+    strictPort: true,
     host: '0.0.0.0',
     proxy: {
       // /api/agent → agent service, plain /api → ERP. Vite proxy uses prefix

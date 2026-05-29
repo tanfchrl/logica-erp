@@ -294,7 +294,7 @@ function UploadPhase({
   );
 }
 
-/* ─── Phase 2: Map columns ─── */
+/* ─── Map columns ─── */
 
 function MapPhase({
   recipe, fileName, rows, headers, mapping, onChangeMapping, onBack, onPreviewed,

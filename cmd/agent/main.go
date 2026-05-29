@@ -106,7 +106,7 @@ func main() {
 	erp := erpclient.New(erpBase)
 	toolReg := tools.New(erp, registry)
 	apvStore := approvals.New(db)
-	migrationSvc := migration.New(sessStore, erp)
+	migrationSvc := migration.New(sessStore, erp).SetLLM(llmProvider)
 	// Nudge evaluator shares the ERP client (per spec: nudges query as the
 	// calling user, never with a privileged credential).
 	nudges.SetClient(erp)
@@ -679,6 +679,25 @@ func registerMigration(api huma.API, svc *migration.Service) {
 	})
 
 	huma.Register(api, huma.Operation{
+		OperationID: "discovery-chat",
+		Method:      http.MethodPost,
+		Path:        "/migration/{session_id}/discovery/chat",
+		Summary:     "Step 1: one conversational turn of the discovery interview; records the SetupProfile via the model and advances to COA when complete",
+		Tags:        []string{"Agent / Migration"},
+	}, func(ctx context.Context, in *discoveryChatIn) (*discoveryChatOut, error) {
+		p := auth.FromContext(ctx)
+		if p == nil {
+			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
+		}
+		co := auth.CompanyFromContext(ctx)
+		res, err := svc.DiscoveryChat(ctx, p.UserID, in.SessionID, co, in.Body.Message)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &discoveryChatOut{Body: *res}, nil
+	})
+
+	huma.Register(api, huma.Operation{
 		OperationID: "propose-coa",
 		Method:      http.MethodPost,
 		Path:        "/migration/{session_id}/coa/propose",
@@ -689,7 +708,8 @@ func registerMigration(api huma.API, svc *migration.Service) {
 		if p == nil {
 			return nil, huma.NewError(http.StatusUnauthorized, "unauthenticated")
 		}
-		proposal, err := svc.ProposeCOA(ctx, p.UserID, in.SessionID)
+		co := auth.CompanyFromContext(ctx)
+		proposal, err := svc.ProposeCOA(ctx, p.UserID, in.SessionID, co)
 		if err != nil {
 			return nil, httpx.MapError(err)
 		}
@@ -882,6 +902,14 @@ type (
 		SessionID string `path:"session_id"`
 		Body      migration.SetupProfile
 	}
+	discoveryChatIn struct {
+		SessionID string `path:"session_id"`
+		Body      discoveryChatBody
+	}
+	discoveryChatBody struct {
+		Message string `json:"message"`
+	}
+	discoveryChatOut struct{ Body migration.DiscoveryResult }
 	coaProposeOut  struct{ Body coaProposeBody }
 	coaProposeBody struct {
 		Proposal []migration.COAAccount `json:"proposal"`

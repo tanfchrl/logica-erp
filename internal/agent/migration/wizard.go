@@ -62,12 +62,16 @@ type State struct {
 	StepData map[Step]any `json:"step_data,omitempty"`
 }
 
-// Service drives wizard state transitions. It does NOT call the LLM —
-// conversational steps go through the shared agent chat loop, which
-// already lives in cmd/agent. This service just curates state.
+// Service drives wizard state transitions. Deterministic steps (readiness,
+// the PSAK base + industry-overlay COA) need no model. The conversational
+// Discovery step and the LLM-assisted COA augmentation use an optional
+// LLMResolver wired via SetLLM — when it's absent or unconfigured those paths
+// degrade gracefully (Discovery errors with a clear message; COA falls back to
+// the deterministic proposal).
 type Service struct {
 	sess *session.Store
 	erp  *erpclient.Client
+	llm  LLMResolver
 }
 
 func New(sess *session.Store, erp *erpclient.Client) *Service {
@@ -129,7 +133,7 @@ func (s *Service) SaveProfile(ctx context.Context, userID, sessionID string, p S
 // from SetupProfile.Industry (mapped through resolveIndustry). The result
 // is stored under StepData so the FE can render it as an editable table
 // before the user accepts.
-func (s *Service) ProposeCOA(ctx context.Context, userID, sessionID string) ([]COAAccount, error) {
+func (s *Service) ProposeCOA(ctx context.Context, userID, sessionID, companyID string) ([]COAAccount, error) {
 	st, err := s.LoadState(ctx, userID, sessionID)
 	if err != nil {
 		return nil, err
@@ -139,10 +143,18 @@ func (s *Service) ProposeCOA(ctx context.Context, userID, sessionID string) ([]C
 	}
 	industry := resolveIndustry(st.Profile.Industry, st.Profile.BusinessType)
 	proposal := buildCOAProposal(industry)
+
+	// Best-effort LLM augmentation: ask the model for accounts a business like
+	// this needs beyond the deterministic base + overlay. Any failure (no
+	// model, bad output, API error) falls back to `proposal` unchanged.
+	added := s.llmAugmentCOA(ctx, companyID, st.Profile, proposal)
+	proposal = append(proposal, added...)
+
 	data := map[string]any{
 		"proposal":          proposal,
 		"accepted":          false,
 		"resolved_industry": string(industry),
+		"llm_added":         len(added),
 	}
 	st.StepData[StepCOA] = data
 	if _, err := s.saveAndReturn(ctx, sessionID, st); err != nil {
