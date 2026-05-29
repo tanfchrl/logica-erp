@@ -1,5 +1,7 @@
-// Command worker runs background jobs (River). Phase 0 ships an idle worker —
-// jobs are registered as later phases need them.
+// Command worker runs background jobs via River (Postgres-backed, no Redis).
+// It owns all recurring background work — currently the agent-data retention
+// sweep. New deferred jobs are added by registering a Worker in
+// internal/platform/jobs.
 package main
 
 import (
@@ -11,6 +13,7 @@ import (
 
 	"github.com/tandigital/logica-erp/internal/config"
 	"github.com/tandigital/logica-erp/internal/platform/dbx"
+	"github.com/tandigital/logica-erp/internal/platform/jobs"
 )
 
 func main() {
@@ -31,7 +34,27 @@ func main() {
 	}
 	defer db.Close()
 
-	logger.Info("worker: idle (no jobs registered yet)")
+	if err := jobs.Migrate(ctx, db); err != nil {
+		logger.Error("worker: river migrate", "err", err)
+		os.Exit(2)
+	}
+
+	client, err := jobs.NewClient(db, logger, jobs.DefaultRetentionInterval)
+	if err != nil {
+		logger.Error("worker: river client", "err", err)
+		os.Exit(2)
+	}
+
+	if err := client.Start(ctx); err != nil {
+		logger.Error("worker: river start", "err", err)
+		os.Exit(2)
+	}
+	logger.Info("worker: started; retention sweep scheduled", "interval", jobs.DefaultRetentionInterval.String())
+
 	<-ctx.Done()
 	logger.Info("worker: shutting down")
+	// Give in-flight jobs a chance to finish on a fresh, non-cancelled context.
+	if err := client.Stop(context.Background()); err != nil {
+		logger.Warn("worker: river stop", "err", err)
+	}
 }

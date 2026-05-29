@@ -83,6 +83,24 @@ services:
       timeout: 3s
       retries: 5
 
+  # Background worker for dev. Runs River jobs (the daily retention sweep) from
+  # source via `go run`. Applies River's own schema at boot, then schedules the
+  # periodic jobs. Mirrors the prod `worker` service in docker-compose.yml.
+  worker:
+    image: golang:1.23-alpine
+    container_name: logica-worker
+    working_dir: /src
+    volumes:
+      - ../:/src
+      - logica_agent_pnpm_cache:/root/.cache/go-build
+    environment:
+      LOGICA_DATABASE_URL: postgres://logica:logica@postgres:5432/logica?sslmode=disable
+      LOGICA_ENV: dev
+    command: ["sh", "-c", "apk add --no-cache git && go run -buildvcs=false ./cmd/worker"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   logica_pg_data:
   logica_minio_data:
