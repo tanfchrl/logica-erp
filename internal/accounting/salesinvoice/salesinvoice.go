@@ -161,6 +161,13 @@ type Service struct {
 	// Notifier is optional. When set, Submit() fires `invoice.issued` after
 	// successful commit so notifrules can route in-app + email notifications.
 	Notifier notifier
+	// Indexer is optional. When set, Submit() upserts a global-search row for
+	// the invoice inside the submit transaction.
+	Indexer searchIndexer
+}
+
+type searchIndexer interface {
+	IndexDocument(ctx context.Context, tx pgx.Tx, doctype, documentID, name, title, body, companyID string) error
 }
 
 type approvalChecker interface {
@@ -611,6 +618,18 @@ func (s *Service) Submit(ctx context.Context, id string) (*SalesInvoice, error) 
 			return err
 		}
 		out = *loaded
+		if s.Indexer != nil {
+			var customerName string
+			_ = tx.QueryRow(ctx, `SELECT coalesce(display_name, name) FROM customer WHERE id = $1`, out.CustomerID).Scan(&customerName)
+			title := customerName
+			if title == "" {
+				title = out.Name
+			}
+			body := strings.TrimSpace(customerName + " " + out.Remarks)
+			if err := s.Indexer.IndexDocument(ctx, tx, Doctype, out.ID, out.Name, title, body, out.CompanyID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err == nil && s.Notifier != nil {

@@ -179,10 +179,16 @@ type Service struct {
 	// AssetCreator is optional. When set, PI Submit auto-creates draft
 	// Asset records for every line whose item has is_fixed_asset=true.
 	AssetCreator AssetCreator
+	// Indexer is optional. When set, Submit() upserts a global-search row.
+	Indexer searchIndexer
 }
 
 type notifier interface {
 	Fire(eventKey string, payload map[string]any)
+}
+
+type searchIndexer interface {
+	IndexDocument(ctx context.Context, tx pgx.Tx, doctype, documentID, name, title, body, companyID string) error
 }
 
 // buyingSettingsProvider is the narrow contract Submit/Create needs from
@@ -830,6 +836,18 @@ func (s *Service) Submit(ctx context.Context, id string) (*PurchaseInvoice, erro
 			return err
 		}
 		out = *loaded
+		if s.Indexer != nil {
+			var supplierName string
+			_ = tx.QueryRow(ctx, `SELECT coalesce(display_name, name) FROM supplier WHERE id = $1`, out.SupplierID).Scan(&supplierName)
+			title := supplierName
+			if title == "" {
+				title = out.Name
+			}
+			body := strings.TrimSpace(supplierName + " " + out.Remarks)
+			if err := s.Indexer.IndexDocument(ctx, tx, Doctype, out.ID, out.Name, title, body, out.CompanyID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err != nil {

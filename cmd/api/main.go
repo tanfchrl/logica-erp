@@ -249,6 +249,13 @@ func main() {
 	assetMovementSvc.Notifier = notifier
 	assetVASvc.Notifier = notifier
 	posSvc.Notifier = notifier
+	// Global-search ingestion: submit/create paths upsert search_index rows.
+	siSvc.Indexer = crosscutSvc
+	piSvc.Indexer = crosscutSvc
+	jeSvc.Indexer = crosscutSvc
+	customerSvc.Indexer = crosscutSvc
+	supplierSvc.Indexer = crosscutSvc
+	itemSvc.Indexer = crosscutSvc
 	soSvc.Approvals = approvalEng
 	soSvc.Workflow = workflowEng
 	tsSvc.Workflow = workflowEng

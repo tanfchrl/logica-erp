@@ -93,6 +93,12 @@ type Service struct {
 	Workflow workflowGate
 	// Notifier is optional. Submit() fires journal_entry.submitted after commit.
 	Notifier notifier
+	// Indexer is optional. When set, Submit() upserts a global-search row.
+	Indexer searchIndexer
+}
+
+type searchIndexer interface {
+	IndexDocument(ctx context.Context, tx pgx.Tx, doctype, documentID, name, title, body, companyID string) error
 }
 
 type approvalChecker interface {
@@ -294,6 +300,15 @@ func (s *Service) Submit(ctx context.Context, id string) (*JournalEntry, error) 
 			return err
 		}
 		out = *loaded
+		if s.Indexer != nil {
+			title := strings.TrimSpace(out.UserRemark)
+			if title == "" {
+				title = out.Name
+			}
+			if err := s.Indexer.IndexDocument(ctx, tx, Doctype, out.ID, out.Name, title, out.UserRemark, out.CompanyID); err != nil {
+				return err
+			}
+		}
 		return nil
 	})
 	if err == nil && s.Notifier != nil {

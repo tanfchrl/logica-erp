@@ -69,7 +69,15 @@ type SupplierDefaultInput struct {
 	DefaultTaxTemplateID     string `json:"default_tax_template_id,omitempty"`
 }
 
-type Service struct{ db *dbx.DB }
+type Service struct {
+	db *dbx.DB
+	// Indexer is optional. When set, Create()/Update() upsert a global-search row.
+	Indexer searchIndexer
+}
+
+type searchIndexer interface {
+	IndexDocument(ctx context.Context, tx pgx.Tx, doctype, documentID, name, title, body, companyID string) error
+}
 
 func NewService(db *dbx.DB) *Service { return &Service{db: db} }
 
@@ -136,6 +144,12 @@ func (s *Service) Create(ctx context.Context, in SupplierCreateInput) (*Supplier
 				DefaultCurrency:         d.DefaultCurrency,
 				DefaultTaxTemplateID:    d.DefaultTaxTemplateID,
 			})
+		}
+		if s.Indexer != nil {
+			body := strings.TrimSpace(sup.Name + " " + sup.NPWP + " " + sup.Email)
+			if err := s.Indexer.IndexDocument(ctx, tx, Doctype, sup.ID, sup.Name, sup.DisplayName, body, ""); err != nil {
+				return err
+			}
 		}
 		return audit.Record(ctx, tx, Doctype, sup.ID, p.UserID, audit.ActionCreate, audit.Diff{After: in})
 	})
@@ -204,6 +218,12 @@ func (s *Service) Update(ctx context.Context, id string, in SupplierUpdateInput)
 				  default_currency           = EXCLUDED.default_currency,
 				  default_tax_template_id    = EXCLUDED.default_tax_template_id`,
 				id, d.CompanyID, nullable(d.DefaultPayableAccountID), nullable(d.DefaultCurrency), nullable(d.DefaultTaxTemplateID)); err != nil {
+				return err
+			}
+		}
+		if s.Indexer != nil {
+			body := strings.TrimSpace(beforeName + " " + in.NPWP + " " + in.Email)
+			if err := s.Indexer.IndexDocument(ctx, tx, Doctype, id, beforeName, in.DisplayName, body, ""); err != nil {
 				return err
 			}
 		}
