@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Building2, Plus, Check, AlertCircle } from 'lucide-react';
+import { Building2, Plus, Check } from 'lucide-react';
 import { Card, CardDescription, CardTitle } from '@/components/Card';
 import { Button } from '@/components/Button';
 import { Field, Input } from '@/components/Input';
@@ -103,7 +103,13 @@ export function CompanySection() {
         )}
       </section>
 
-      {selected && <CompanyDetail company={selected} />}
+      {selected && (
+        <CompanyDetail
+          key={selected.id}
+          company={selected}
+          onSaved={() => void qc.invalidateQueries({ queryKey: ['companies'] })}
+        />
+      )}
 
       {createOpen && (
         <CreateCompanyDialog
@@ -119,9 +125,70 @@ export function CompanySection() {
   );
 }
 
-/* ---------------- Company detail (read-only for now) ----------------- */
+/* ---------------- Company detail (editable) ----------------- */
 
-function CompanyDetail({ company }: { company: Company }) {
+interface UpdateInput {
+  name: string;
+  legal_name: string;
+  country: string;
+  default_currency: string;
+  npwp?: string;
+  npwp_address?: string;
+  address_line?: string;
+  city?: string;
+  province?: string;
+  postal_code?: string;
+  email?: string;
+  phone?: string;
+  website?: string;
+}
+
+function CompanyDetail({ company, onSaved }: { company: Company; onSaved: () => void }) {
+  const initial: UpdateInput = {
+    name: company.name,
+    legal_name: company.legal_name,
+    country: company.country,
+    default_currency: company.default_currency,
+    npwp: company.npwp ?? '',
+    npwp_address: company.npwp_address ?? '',
+    address_line: company.address_line ?? '',
+    city: company.city ?? '',
+    province: company.province ?? '',
+    postal_code: company.postal_code ?? '',
+    email: company.email ?? '',
+    phone: company.phone ?? '',
+    website: company.website ?? '',
+  };
+  const [form, setForm] = useState<UpdateInput>(initial);
+  const [error, setError] = useState<string | null>(null);
+
+  const dirty = JSON.stringify(form) !== JSON.stringify(initial);
+
+  const mut = useMutation({
+    mutationFn: (input: UpdateInput) =>
+      api<Company>(`/accounting/companies/${company.id}`, { method: 'PUT', body: input }),
+    onSuccess: () => { setError(null); onSaved(); },
+    onError:   (e: Error) => setError(e.message),
+  });
+
+  function submit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!form.name.trim() || !form.legal_name.trim()) {
+      setError('Name and legal name are required.');
+      return;
+    }
+    if (form.npwp && !/^\d{16}$/.test(form.npwp)) {
+      setError('NPWP must be 16 digits.');
+      return;
+    }
+    mut.mutate(form);
+  }
+
+  function set<K extends keyof UpdateInput>(key: K, value: UpdateInput[K]) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
   return (
     <section>
       <div className="mb-3 flex items-end justify-between gap-3">
@@ -129,45 +196,77 @@ function CompanyDetail({ company }: { company: Company }) {
           <CardTitle>{company.name}</CardTitle>
           <CardDescription>{company.legal_name}</CardDescription>
         </div>
-        <StatusPill tone="neutral">Read-only</StatusPill>
+        <StatusPill tone={dirty ? 'accent' : 'neutral'}>{dirty ? 'Unsaved changes' : 'Editing'}</StatusPill>
       </div>
 
       <Card>
-        <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
-          <ReadField label="Name"             value={company.name} />
-          <ReadField label="Legal name"       value={company.legal_name} />
-          <ReadField label="Abbreviation"     value={company.abbreviation} mono />
-          <ReadField label="Default currency" value={company.default_currency} mono />
-          <ReadField label="Country"          value={company.country} />
-          <ReadField label="NPWP"             value={company.npwp ?? '—'} mono />
-          <ReadField label="NPWP address"     value={company.npwp_address ?? '—'} className="sm:col-span-2" />
-          <ReadField label="Address"          value={company.address_line ?? '—'} className="sm:col-span-2" />
-          <ReadField label="City"             value={company.city ?? '—'} />
-          <ReadField label="Province"         value={company.province ?? '—'} />
-          <ReadField label="Postal code"      value={company.postal_code ?? '—'} mono />
-          <ReadField label="Email"            value={company.email ?? '—'} />
-          <ReadField label="Phone"            value={company.phone ?? '—'} mono />
-          <ReadField label="Website"          value={company.website ?? '—'} />
-        </div>
+        <form onSubmit={submit} className="space-y-5">
+          <div className="grid sm:grid-cols-2 gap-x-6 gap-y-4">
+            <Field label="Name (display)">
+              <Input value={form.name} onChange={(e) => set('name', e.target.value)} required />
+            </Field>
+            <Field label="Legal name">
+              <Input value={form.legal_name} onChange={(e) => set('legal_name', e.target.value)} required />
+            </Field>
+            <div>
+              <div className="text-micro-uppercase text-stone mb-0.5">Abbreviation</div>
+              <div className="text-body-sm text-ink font-mono">{company.abbreviation}</div>
+              <div className="text-caption text-stone mt-0.5">Immutable — embedded in account names.</div>
+            </div>
+            <Field label="Default currency">
+              <Input value={form.default_currency} maxLength={3} className="uppercase font-mono"
+                onChange={(e) => set('default_currency', e.target.value.toUpperCase())} />
+            </Field>
+            <Field label="Country">
+              <Input value={form.country} onChange={(e) => set('country', e.target.value)} />
+            </Field>
+            <Field label="NPWP">
+              <Input value={form.npwp ?? ''} className="font-mono" onChange={(e) => set('npwp', e.target.value)} />
+            </Field>
+            <div className="sm:col-span-2">
+              <Field label="NPWP address">
+                <Input value={form.npwp_address ?? ''} onChange={(e) => set('npwp_address', e.target.value)} />
+              </Field>
+            </div>
+            <div className="sm:col-span-2">
+              <Field label="Address">
+                <Input value={form.address_line ?? ''} onChange={(e) => set('address_line', e.target.value)} />
+              </Field>
+            </div>
+            <Field label="City">
+              <Input value={form.city ?? ''} onChange={(e) => set('city', e.target.value)} />
+            </Field>
+            <Field label="Province">
+              <Input value={form.province ?? ''} onChange={(e) => set('province', e.target.value)} />
+            </Field>
+            <Field label="Postal code">
+              <Input value={form.postal_code ?? ''} className="font-mono" onChange={(e) => set('postal_code', e.target.value)} />
+            </Field>
+            <Field label="Email">
+              <Input type="email" value={form.email ?? ''} onChange={(e) => set('email', e.target.value)} />
+            </Field>
+            <Field label="Phone">
+              <Input value={form.phone ?? ''} className="font-mono" onChange={(e) => set('phone', e.target.value)} />
+            </Field>
+            <Field label="Website">
+              <Input value={form.website ?? ''} onChange={(e) => set('website', e.target.value)} />
+            </Field>
+          </div>
 
-        <div className="mt-5 pt-4 border-t border-hairline flex items-start gap-2 text-caption text-stone">
-          <AlertCircle className="size-3.5 mt-0.5 shrink-0" />
-          <span>
-            Editing existing companies needs the <span className="font-mono">PUT /accounting/companies/{'{id}'}</span> endpoint
-            (not yet on the API). For now, create a fresh company or contact ops.
-          </span>
-        </div>
+          {error && (
+            <div className="rounded-md bg-brand-error/10 text-brand-error text-caption px-3 py-2">{error}</div>
+          )}
+
+          <div className="pt-4 border-t border-hairline flex items-center justify-end gap-2">
+            <Button type="button" variant="ghost" disabled={!dirty || mut.isPending}
+              onClick={() => { setForm(initial); setError(null); }}>
+              Reset
+            </Button>
+            <Button type="submit" loading={mut.isPending} disabled={!dirty}>Save changes</Button>
+          </div>
+        </form>
       </Card>
     </section>
-  );
-}
-
-function ReadField({ label, value, mono, className }: { label: string; value: string; mono?: boolean; className?: string }) {
-  return (
-    <div className={className}>
-      <div className="text-micro-uppercase text-stone mb-0.5">{label}</div>
-      <div className={cn('text-body-sm text-ink truncate', mono && 'font-mono')}>{value || '—'}</div>
-    </div>
   );
 }
 

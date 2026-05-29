@@ -97,6 +97,81 @@ func (s *Service) Create(ctx context.Context, in CompanyCreateInput) (*Company, 
 	return &c, err
 }
 
+// CompanyUpdateInput mirrors the editable fields of a company. The abbreviation
+// is immutable — it is embedded in seeded account names and naming series, so
+// renaming it would orphan those references; create a new company instead.
+type CompanyUpdateInput struct {
+	Name            string         `json:"name"`
+	LegalName       string         `json:"legal_name"`
+	Country         string         `json:"country,omitempty"`
+	DefaultCurrency string         `json:"default_currency,omitempty"`
+	NPWP            string         `json:"npwp,omitempty"`
+	NPWPAddress     string         `json:"npwp_address,omitempty"`
+	AddressLine     string         `json:"address_line,omitempty"`
+	City            string         `json:"city,omitempty"`
+	Province        string         `json:"province,omitempty"`
+	PostalCode      string         `json:"postal_code,omitempty"`
+	Phone           string         `json:"phone,omitempty"`
+	Email           string         `json:"email,omitempty"`
+	Website         string         `json:"website,omitempty"`
+	CustomFields    map[string]any `json:"custom_fields,omitempty"`
+}
+
+func (s *Service) Update(ctx context.Context, id string, in CompanyUpdateInput) (*Company, error) {
+	p := auth.FromContext(ctx)
+	if p == nil {
+		return nil, errors.New("company: unauthenticated")
+	}
+	if err := validateUpdate(&in); err != nil {
+		return nil, err
+	}
+
+	before, err := s.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+
+	var c Company
+	err = s.db.Tx(ctx, func(tx pgx.Tx) error {
+		cf, err := customfield.EnsureTxValidator(ctx, tx, Doctype, in.CustomFields)
+		if err != nil {
+			return err
+		}
+		row := tx.QueryRow(ctx, `
+			UPDATE company SET
+				name = $2, legal_name = $3, country = $4, default_currency = $5,
+				npwp = $6, npwp_address = $7, address_line = $8, city = $9,
+				province = $10, postal_code = $11, phone = $12, email = $13,
+				website = $14, custom_fields = $15, updated_by = $16, updated_at = now()
+			WHERE id = $1 AND is_deleted = false
+			RETURNING id, name, legal_name, abbreviation, country, default_currency,
+			          coalesce(npwp,''), coalesce(npwp_address,''), coalesce(address_line,''),
+			          coalesce(city,''), coalesce(province,''), coalesce(postal_code,''),
+			          coalesce(phone,''), coalesce(email,''), coalesce(website,''),
+			          is_deleted, created_at, updated_at`,
+			id, in.Name, in.LegalName,
+			defaulted(in.Country, before.Country), defaulted(in.DefaultCurrency, before.DefaultCurrency),
+			nullable(in.NPWP), nullable(in.NPWPAddress), nullable(in.AddressLine),
+			nullable(in.City), nullable(in.Province), nullable(in.PostalCode),
+			nullable(in.Phone), nullable(in.Email), nullable(in.Website),
+			cf, p.UserID,
+		)
+		if err := row.Scan(&c.ID, &c.Name, &c.LegalName, &c.Abbreviation, &c.Country, &c.DefaultCurrency,
+			&c.NPWP, &c.NPWPAddress, &c.AddressLine, &c.City, &c.Province, &c.PostalCode,
+			&c.Phone, &c.Email, &c.Website, &c.IsDeleted, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return fmt.Errorf("company %s not found", id)
+			}
+			if dbx.IsUniqueViolation(err) {
+				return fmt.Errorf("company: duplicate name or abbreviation")
+			}
+			return err
+		}
+		return audit.Record(ctx, tx, Doctype, c.ID, p.UserID, audit.ActionUpdate, audit.Diff{Before: *before, After: c})
+	})
+	return &c, err
+}
+
 func (s *Service) Get(ctx context.Context, id string) (*Company, error) {
 	var c Company
 	err := s.db.QueryRow(ctx, `
@@ -169,6 +244,22 @@ func validateCreate(in *CompanyCreateInput) error {
 	}
 	if in.Abbreviation == "" {
 		return errors.New("company.abbreviation: required")
+	}
+	if in.NPWP != "" && !npwpRegex.MatchString(in.NPWP) {
+		return errors.New("company.npwp: must be 16 digits")
+	}
+	return nil
+}
+
+func validateUpdate(in *CompanyUpdateInput) error {
+	in.Name = strings.TrimSpace(in.Name)
+	in.LegalName = strings.TrimSpace(in.LegalName)
+	in.NPWP = strings.TrimSpace(in.NPWP)
+	if in.Name == "" {
+		return errors.New("company.name: required")
+	}
+	if in.LegalName == "" {
+		return errors.New("company.legal_name: required")
 	}
 	if in.NPWP != "" && !npwpRegex.MatchString(in.NPWP) {
 		return errors.New("company.npwp: must be 16 digits")

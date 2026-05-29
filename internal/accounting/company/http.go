@@ -67,6 +67,23 @@ func Register(api huma.API, h *Handler) {
 		}
 		return &companyCreateOut{Body: *c}, nil
 	})
+
+	huma.Register(api, huma.Operation{
+		OperationID: "update-company",
+		Method:      http.MethodPut,
+		Path:        "/accounting/companies/{id}",
+		Summary:     "Update a company",
+		Tags:        []string{"Accounting / Company"},
+	}, func(ctx context.Context, in *companyUpdateIn) (*companyCreateOut, error) {
+		if err := h.Perm.Check(ctx, Doctype, permission.ActionWrite); err != nil {
+			return nil, httpx.MapError(err)
+		}
+		c, err := h.Service.Update(ctx, in.ID, in.Body)
+		if err != nil {
+			return nil, httpx.MapError(err)
+		}
+		return &companyCreateOut{Body: *c}, nil
+	})
 }
 
 type (
@@ -78,5 +95,9 @@ type (
 	}
 	companyGetIn struct {
 		ID string `path:"id"`
+	}
+	companyUpdateIn struct {
+		ID   string `path:"id"`
+		Body CompanyUpdateInput
 	}
 )
